@@ -14,6 +14,7 @@ from .verl_aligned_adaptor import VerlAlignedAdaptor
 from .verl_gpqa_diamond_adaptor import VerlGPQADiamondAdaptor
 from .verl_mmlu_pro_adaptor import VerlMMLUProAdaptor
 from .verl_scibench_adaptor import VerlSciBenchAdaptor
+from .c1_math_adaptor import C1AimeUnionAdaptor, C1OR1200Adaptor
 
 
 class AdaptorFactory:
@@ -50,6 +51,11 @@ class AdaptorFactory:
             'verl_gpqa_diamond': VerlGPQADiamondAdaptor,
             'verl_mmlu_pro': VerlMMLUProAdaptor,
             'verl_scibench': VerlSciBenchAdaptor,
+            # This paper's C.1 mixin (do not alias onto VerlAlignedAdaptor).
+            'c1_aime_union': C1AimeUnionAdaptor,
+            'aime_union': C1AimeUnionAdaptor,
+            'c1_or1_200': C1OR1200Adaptor,
+            'or1_200': C1OR1200Adaptor,
         }
 
         adaptor_class = adaptor_map.get(benchmark_type.lower())
