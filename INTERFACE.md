@@ -4,9 +4,27 @@ This is the data contract. Training writes checkpoints; evaluation reads them an
 
 Invariant: **every evaluation run is `g=0`** (no teacher prefix, no hint). Same student chat template as training at `g=0` (proposal Appendix C.1 / C.3).
 
-System: `You are an expert mathematician with strong problem-solving skills. Think step by step.`
+### The g=0 prompt is a cross-side invariant
 
-User: the problem text, then `Please reason step by step, and put your final answer within \boxed{}.`
+Training at `g=0` and evaluation must render the **byte-identical** string. This is the golden form; both sides test against it, and neither side may change it unilaterally:
+
+```
+<|im_start|>system
+You are an expert mathematician with strong problem-solving skills. Think step by step.<|im_end|>
+<|im_start|>user
+{problem}
+Please reason step by step, and put your final answer within \boxed{}.<|im_end|>
+<|im_start|>assistant
+<think>
+
+```
+
+Conventions, frozen 2026-09-22:
+
+- `add_generation_prompt=True` opens the assistant turn.
+- A **format-only** `<think>\n` IS prefilled, carrying no teacher content. Appendix C.3's `g=0` row permits it, and it is required for continuity of the `g`-path: for `g≥1` the assistant side is a true token prefix of `T(x)`, which itself opens with `<think>\n` (Appendix C.1). Omitting it at `g=0` would put a discontinuity exactly on the endpoint that vanilla OPD (run C01) and the Base evaluations live on.
+- `enable_thinking` is NOT passed. Passing `False` injects a *closed* empty think block, which is a different string.
+- Students are `-Base` checkpoints, so the chat template must be verified against the real `Qwen/Qwen3-1.7B-Base` and `Qwen/Qwen3-0.6B-Base` tokenizers on the GPU host. Until then this golden string is **pending verification** and the tests say so rather than passing silently.
 
 Verifier: Math-Verify on the student completion (boxed extract), same rule as corpus construction. The training verifier gate also looks only at the student's suffix; eval has no prefix to ignore.
 
