@@ -7,8 +7,9 @@ The set is not frozen and must not be a hardcoded nine. The same
 a length of nine in code.
 
 Wired now: AIME24+25+26 union (K=512) and OR1-200 held-out (K=128),
-both through the C.1 mixin. Nine-benchmark, harm/OOD, and coding
-entries are added when the lead names them.
+both through the C.1 mixin. Nine-benchmark and harm/OOD entries are
+appended when the lead names them. HumanEval+ is registered on the
+factory as a stub (``NotImplementedError``), not as a live roster job.
 
 Bins for OR1-200 are a training-side input (fresh Base pass@16). They
 are not a roster field and must not be read from ``ttn_test_200.jsonl``

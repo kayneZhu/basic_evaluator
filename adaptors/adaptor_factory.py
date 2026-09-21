@@ -15,6 +15,7 @@ from .verl_gpqa_diamond_adaptor import VerlGPQADiamondAdaptor
 from .verl_mmlu_pro_adaptor import VerlMMLUProAdaptor
 from .verl_scibench_adaptor import VerlSciBenchAdaptor
 from .c1_math_adaptor import C1AimeUnionAdaptor, C1OR1200Adaptor
+from .humaneval_plus_adaptor import HumanEvalPlusAdaptor
 
 
 class AdaptorFactory:
@@ -56,6 +57,9 @@ class AdaptorFactory:
             'aime_union': C1AimeUnionAdaptor,
             'c1_or1_200': C1OR1200Adaptor,
             'or1_200': C1OR1200Adaptor,
+            # Stub: raises NotImplementedError on construct. Not a fake scorer.
+            'humaneval_plus': HumanEvalPlusAdaptor,
+            'humaneval+': HumanEvalPlusAdaptor,
         }
 
         adaptor_class = adaptor_map.get(benchmark_type.lower())
