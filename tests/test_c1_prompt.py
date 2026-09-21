@@ -11,9 +11,12 @@ PENDING GPU VERIFICATION (xfail, not a silent skip).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import sys
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -31,6 +34,64 @@ from adaptors.c1_prompt_mixin import (
     render_c1_chatml,
     render_c1_prompt,
 )
+
+
+EVAL_ROOT = Path(__file__).resolve().parents[1]
+G0_GOLDEN_JSON = EVAL_ROOT / "contract" / "g0_prompt.golden.json"
+INTERFACE_MD = EVAL_ROOT / "INTERFACE.md"
+_G0_HEADER = "### The g=0 prompt is a cross-side invariant"
+_PLACEHOLDER = "{problem}"
+
+
+def load_g0_golden() -> dict:
+    payload = json.loads(G0_GOLDEN_JSON.read_text(encoding="utf-8"))
+    template = payload.get("template")
+    if not isinstance(template, str) or _PLACEHOLDER not in template:
+        raise ValueError(
+            "g=0 golden JSON is missing a template with {problem}; "
+            "refusing to invent a golden string"
+        )
+    if "<think>" not in template:
+        raise ValueError("golden template is missing the format-only <think> prefill")
+    return payload
+
+
+def golden_g0_prompt(problem: str) -> str:
+    return load_g0_golden()["template"].replace(_PLACEHOLDER, problem, 1)
+
+
+def parse_interface_md_g0_template(interface_md: str) -> str:
+    """Return the fenced documentation block, ending in a single newline.
+
+    The markdown fence is written with a blank line before the closing
+    backticks. That blank line is fence formatting, not part of the
+    frozen prefill. Trailing newlines are collapsed to one so the
+    documentation can be compared to the JSON fixture.
+    """
+    start = interface_md.find(_G0_HEADER)
+    if start < 0:
+        raise ValueError(
+            "INTERFACE.md is missing the section "
+            f"{_G0_HEADER!r}; refusing to invent a golden string"
+        )
+    rest = interface_md[start:]
+    open_fence = rest.find("```")
+    if open_fence < 0:
+        raise ValueError("g=0 golden section has no opening fence")
+    after_open = rest[open_fence + 3 :]
+    nl = after_open.find("\n")
+    if nl < 0:
+        raise ValueError("g=0 golden fence is empty")
+    body = after_open[nl + 1 :]
+    close = body.find("```")
+    if close < 0:
+        raise ValueError("g=0 golden section has no closing fence")
+    template = body[:close]
+    if _PLACEHOLDER not in template:
+        raise ValueError("golden template is missing the {problem} placeholder")
+    if "<think>" not in template:
+        raise ValueError("golden template is missing the format-only <think> prefill")
+    return template.rstrip("\n") + "\n"
 
 
 # Fixed toy problem. Do not change without updating every golden string.
@@ -53,20 +114,8 @@ EXPECTED_MESSAGES = [
     },
 ]
 
-# Exact render: official Qwen3-Base chat_template (no tools, system+user,
-# add_generation_prompt=True, enable_thinking undefined) + C.3 <think>\n prefill.
-# Both Qwen/Qwen3-1.7B-Base and Qwen/Qwen3-0.6B-Base publish this same path.
-EXPECTED_RENDERED_C1 = (
-    "<|im_start|>system\n"
-    "You are an expert mathematician with strong problem-solving skills. "
-    "Think step by step.<|im_end|>\n"
-    "<|im_start|>user\n"
-    "Compute 1+1.\n"
-    "Please reason step by step, and put your final answer within \\boxed{}."
-    "<|im_end|>\n"
-    "<|im_start|>assistant\n"
-    "<think>\n"
-)
+# Exact render from the JSON fixture (authority), not the markdown fence.
+EXPECTED_RENDERED_C1 = golden_g0_prompt(TOY_PROBLEM)
 
 PREVIOUS_PAPER_USER_PHRASES = (
     "Please reason step by step to solve this problem.",
@@ -122,6 +171,7 @@ class TestC1Messages(unittest.TestCase):
         )
 
     def test_constants_match_interface(self):
+        golden = load_g0_golden()
         self.assertEqual(
             C1_SYSTEM_PROMPT,
             "You are an expert mathematician with strong problem-solving skills. "
@@ -131,6 +181,9 @@ class TestC1Messages(unittest.TestCase):
             C1_USER_SUFFIX,
             "Please reason step by step, and put your final answer within \\boxed{}.",
         )
+        self.assertEqual(C1_THINK_PREFILL, golden["think_prefill"])
+        self.assertEqual(C1_ADD_GENERATION_PROMPT, golden["add_generation_prompt"])
+        self.assertIs(C1_ENABLE_THINKING, golden["enable_thinking"])
         self.assertEqual(C1_THINK_PREFILL, "<think>\n")
         self.assertTrue(C1_ADD_GENERATION_PROMPT)
         self.assertIsNone(C1_ENABLE_THINKING)
@@ -195,6 +248,20 @@ class TestC1RenderedString(unittest.TestCase):
                 add_generation_prompt=True,
                 enable_thinking=False,
             )
+
+
+class TestGoldenJsonAuthority(unittest.TestCase):
+    def test_recorded_sha256_matches_own_template(self):
+        golden = load_g0_golden()
+        digest = hashlib.sha256(golden["template"].encode("utf-8")).hexdigest()
+        self.assertEqual(golden["sha256"], digest)
+
+    def test_interface_md_fence_matches_json_template(self):
+        md = INTERFACE_MD.read_text(encoding="utf-8")
+        self.assertEqual(
+            parse_interface_md_g0_template(md),
+            load_g0_golden()["template"],
+        )
 
 
 class TestC1LiveTokenizersOrPendingGPU(unittest.TestCase):

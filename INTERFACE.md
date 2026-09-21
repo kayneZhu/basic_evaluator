@@ -6,7 +6,9 @@ Invariant: **every evaluation run is `g=0`** (no teacher prefix, no hint). Same 
 
 ### The g=0 prompt is a cross-side invariant
 
-Training at `g=0` and evaluation must render the **byte-identical** string. This is the golden form; both sides test against it, and neither side may change it unilaterally:
+Training at `g=0` and evaluation must render the **byte-identical** string. This is the golden form; both sides test against it, and neither side may change it unilaterally.
+
+The authoritative machine-readable copy is `contract/g0_prompt.golden.json` (JSON-escaped, so a trailing newline cannot be silently normalized). This fenced block is documentation; `tests/test_c1_prompt.py` fails if the two diverge.
 
 ```
 <|im_start|>system

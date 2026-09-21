@@ -1,0 +1,8 @@
+{
+  "template": "<|im_start|>system\nYou are an expert mathematician with strong problem-solving skills. Think step by step.<|im_end|>\n<|im_start|>user\n{problem}\nPlease reason step by step, and put your final answer within \\boxed{}.<|im_end|>\n<|im_start|>assistant\n<think>\n",
+  "placeholder": "{problem}",
+  "add_generation_prompt": true,
+  "think_prefill": "<think>\n",
+  "enable_thinking": null,
+  "sha256": "a2e812d5d90dabcbb78be3a27bc0e37dc2994472d32d6b808fe172e56d6538d6"
+}
