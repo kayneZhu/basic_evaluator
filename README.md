@@ -2,6 +2,14 @@
 
 A comprehensive LLM evaluation framework with vLLM acceleration for benchmarking language models on mathematical reasoning tasks.
 
+> **Role in the OPD teachable-frontier project.** This repository is checked out as the `eval/` layer of `opd-teachable-frontier` and is the evaluation side of that project. Read **[`INTERFACE.md`](INTERFACE.md)** before touching checkpoint loading or result writing: it is the frozen training↔evaluation data contract (checkpoint paths, the sample-level jsonl schema, shard layout and merge rules, the statistics that must be computable, T=1 on every surface, and the invariant that evaluation is always at `g=0`).
+>
+> Two rules that existing adaptors do **not** satisfy yet, so do not copy them blindly:
+> 1. The student prompt must be the project's Appendix C.1 template. `VerlPromptMixin` uses the *previous* paper's ρ=0 user block and must not be reused — a prompt divergence between training and evaluation silently invalidates every comparison.
+> 2. `pass_count` / `pass_rate` in `data/ttn_test_200.jsonl` are pass@32 from the previous paper and must not be reused for this project's B0–B3 bins, which require freshly measured pass@16.
+>
+> Planning documents live outside this repo in `../docs/eng/` (`eval-integration.md`, `decisions.md`).
+
 ## Features
 
 - **Local Model Loading**: Load and evaluate models from local file system

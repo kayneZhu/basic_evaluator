@@ -24,3 +24,26 @@ wheels/
 outputs/
 *.log
 .DS_Store
+
+# --- added for the OPD teachable-frontier project ---
+.venv/
+.pytest_cache/
+# model weights (never commit)
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.gguf
+models/
+# eval dumps / checkpoints
+results/
+checkpoints/
+wandb/
+# caches
+.cache/
+hf_cache/
+data/cache/
+.env
+# retired thin-wrapper repo from before the flatten
+.git.wrapper.disabled/
