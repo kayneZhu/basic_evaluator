@@ -2,7 +2,7 @@
 
 A comprehensive LLM evaluation framework with vLLM acceleration for benchmarking language models on mathematical reasoning tasks.
 
-> **Role in the OPD teachable-frontier project.** This repository is checked out as the `eval/` layer of `opd-teachable-frontier` and is the evaluation side of that project. Read **[`INTERFACE.md`](INTERFACE.md)** before touching checkpoint loading or result writing: it is the frozen training↔evaluation data contract (checkpoint paths, the sample-level jsonl schema, shard layout and merge rules, the statistics that must be computable, T=1 on every surface, and the invariant that evaluation is always at `g=0`).
+> **Role in the OPD teachable-frontier project.** This repository is checked out as the `eval/` layer of `opd-teachable-frontier` and is the evaluation side of that project. Read **[`INTERFACE.md`](INTERFACE.md)** before touching checkpoint loading or result writing: it is the frozen training↔evaluation data contract (checkpoint paths, the sample-level jsonl schema, shard layout and merge rules, the statistics that must be computable, T=1 on every surface, and the invariant that evaluation is always at `g=0`). Trained checkpoints live at `train/examples/{example_id}/runs/{experiment_id}/checkpoints/global_step_{step}/` (`hf/` + `manifest.json`); the old `train/outputs/{run_id}/{student_slug}/…` tree is refused.
 >
 > Two rules that existing adaptors do **not** satisfy yet, so do not copy them blindly:
 > 1. The student prompt must be the project's Appendix C.1 template. `VerlPromptMixin` uses the *previous* paper's ρ=0 user block and must not be reused — a prompt divergence between training and evaluation silently invalidates every comparison.

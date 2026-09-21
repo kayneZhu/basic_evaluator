@@ -34,28 +34,34 @@ Verifier: Math-Verify on the student completion (boxed extract), same rule as co
 
 ## 1. Checkpoint path
 
-Training writes under `train/outputs/`:
+Training writes under `train/examples/`. Canonical directory (eval loads **only** `hf/`):
 
 ```
-train/outputs/{run_id}/{student_slug}/global_step_{step}/
+train/examples/{example_id}/runs/{experiment_id}/checkpoints/global_step_{step}/
   hf/                 # HuggingFace-loadable (config.json, tokenizer, *.safetensors)
   manifest.json       # sidecar, required
 ```
 
+The previous convention `train/outputs/{run_id}/{student_slug}/global_step_{step}/` is **superseded and illegal**. A path that still parses under it is refused — do not treat a leftover `outputs/` tree as a checkpoint.
+
 | Piece | Rule |
 | --- | --- |
-| `run_id` | Exact §5.1 table ID: `C01`, `C03`, `C04`, `C05`, `M1`, `S2`, `M2`, `L2`, `T1`, `F1`. R06 reuses those IDs and changes only `student_slug`. |
+| `example_id` | §5.1 table-row directory: `C01`, `C03`, `C04`, `C05`, `M1`, `S2`, `M2`, `L2`, `T1`, `F1`, `R06_C01`, `R06_C03`, `R06_M1`, `R06_S2`. |
+| `experiment_id` | One launch of that config. `YYYYMMDDTHHMMSSZ` plus optional `_{hw}` / tag / `_s{seed}`. Also stored in the manifest. |
+| `run_id` (manifest) | §5.1 method ID: `C01`, `C03`, `C04`, `C05`, `M1`, `S2`, `M2`, `L2`, `T1`, `F1`. R06 reuses those IDs and changes only `student_slug`; `example_id` is `R06_C01` etc. |
 | `student_slug` | `qwen3-1.7b-base` or `qwen3-0.6b-base` |
 | `step` | Integer global step, no zero-pad (`global_step_1000`). Full-step ckpts are step **1000** (lead 2026-09-21; proposal §5.1 says 1200 — do not “correct” back). F1 / D3 stay 200. |
-| Format | Eval loads **only** `hf/` via `transformers`. FSDP / verl shards, if any, stay outside `hf/` and are not part of this contract. |
+| Format | Eval loads **only** `hf/` via `transformers`. FSDP / verl shards stay under `actor/` (or otherwise outside `hf/`) and are not part of this contract. |
 
-`C00` / `C00p` (C00′) do not train. They evaluate the public Base snapshot (`Qwen/Qwen3-1.7B-Base` or `Qwen/Qwen3-0.6B-Base`) at two eval seeds. No `train/outputs/C00/...` directory.
+`C00` / `C00p` (C00′) do not train. They evaluate the public Base snapshot (`Qwen/Qwen3-1.7B-Base` or `Qwen/Qwen3-0.6B-Base`) at two eval seeds. No `train/examples/C00/runs/…` checkpoint.
 
 `manifest.json` (required at the `global_step_{step}/` directory):
 
 ```json
 {
   "run_id": "C01",
+  "example_id": "C01",
+  "experiment_id": "20260922T035301Z_h4",
   "student_hf_id": "Qwen/Qwen3-1.7B-Base",
   "student_slug": "qwen3-1.7b-base",
   "teacher_hf_id": "Qwen/Qwen3-4B",
@@ -64,7 +70,7 @@ train/outputs/{run_id}/{student_slug}/global_step_{step}/
 }
 ```
 
-`g_eval` must be `0`. Eval refuses the checkpoint if it is missing or nonzero.
+`g_eval` must be `0`. Eval refuses the checkpoint if it is missing or nonzero. `run_id` and `experiment_id` are required so evaluation can map a checkpoint to the §5.1 table regardless of directory layout. `example_id` is required so the `examples/` folder is recoverable (needed for R06, where `run_id` is the method ID).
 
 ---
 

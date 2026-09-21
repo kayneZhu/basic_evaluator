@@ -17,10 +17,17 @@ from opd_eval.checkpoint import (
     read_checkpoint,
     resolve_eval_target,
 )
+from opd_eval.paths import (
+    CHECKPOINT_PATH_TEMPLATE,
+    checkpoint_dir,
+    is_legacy_checkpoint_path,
+)
 
 
 VALID = {
     "run_id": "C01",
+    "example_id": "C01",
+    "experiment_id": "20260922T035301Z_h4",
     "student_hf_id": "Qwen/Qwen3-1.7B-Base",
     "student_slug": "qwen3-1.7b-base",
     "teacher_hf_id": "Qwen/Qwen3-4B",
@@ -46,6 +53,8 @@ class TestCheckpointReader(unittest.TestCase):
             spec = read_checkpoint(ckpt)
             self.assertEqual(spec.g_eval, 0)
             self.assertEqual(spec.run_id, "C01")
+            self.assertEqual(spec.example_id, "C01")
+            self.assertEqual(spec.experiment_id, "20260922T035301Z_h4")
             self.assertEqual(spec.step, 1000)
             self.assertEqual(spec.model_path, str(ckpt / "hf"))
             self.assertTrue(spec.model_path.endswith("/hf") or spec.model_path.endswith("\\hf"))
@@ -97,6 +106,66 @@ class TestCheckpointReader(unittest.TestCase):
     def test_trained_run_without_ckpt_dir_refused(self):
         with self.assertRaises(CheckpointRefused):
             resolve_eval_target("C01", "qwen3-1.7b-base")
+
+    def test_refuses_missing_experiment_id(self):
+        manifest = dict(VALID)
+        del manifest["experiment_id"]
+        with tempfile.TemporaryDirectory() as td:
+            ckpt = _write_ckpt(Path(td), manifest)
+            with self.assertRaises(CheckpointRefused) as ctx:
+                read_checkpoint(ckpt)
+            self.assertIn("experiment_id", str(ctx.exception))
+
+    def test_refuses_missing_example_id(self):
+        manifest = dict(VALID)
+        del manifest["example_id"]
+        with tempfile.TemporaryDirectory() as td:
+            ckpt = _write_ckpt(Path(td), manifest)
+            with self.assertRaises(CheckpointRefused) as ctx:
+                read_checkpoint(ckpt)
+            self.assertIn("example_id", str(ctx.exception))
+
+    def test_canonical_checkpoint_dir_helper(self):
+        path = checkpoint_dir("/train", "R06_C01", "20260922T035301Z_h4", 1000)
+        self.assertEqual(
+            path,
+            Path("/train")
+            / "examples"
+            / "R06_C01"
+            / "runs"
+            / "20260922T035301Z_h4"
+            / "checkpoints"
+            / "global_step_1000",
+        )
+        self.assertEqual(
+            CHECKPOINT_PATH_TEMPLATE.format(
+                example_id="R06_C01",
+                experiment_id="20260922T035301Z_h4",
+                step=1000,
+            ),
+            "examples/R06_C01/runs/20260922T035301Z_h4/checkpoints/global_step_1000",
+        )
+
+    def test_refuses_legacy_outputs_layout_even_with_valid_manifest(self):
+        """A stale path that still parses is the silent breakage to avoid."""
+        with tempfile.TemporaryDirectory() as td:
+            legacy = (
+                Path(td)
+                / "outputs"
+                / "C01"
+                / "qwen3-1.7b-base"
+                / "global_step_1000"
+            )
+            legacy.mkdir(parents=True)
+            (legacy / "manifest.json").write_text(
+                json.dumps(VALID), encoding="utf-8"
+            )
+            (legacy / "hf").mkdir()
+            (legacy / "hf" / "config.json").write_text("{}", encoding="utf-8")
+            self.assertTrue(is_legacy_checkpoint_path(legacy))
+            with self.assertRaises(CheckpointRefused) as ctx:
+                read_checkpoint(legacy)
+            self.assertIn("superseded", str(ctx.exception))
 
 
 if __name__ == "__main__":

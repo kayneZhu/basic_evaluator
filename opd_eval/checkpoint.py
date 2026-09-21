@@ -1,12 +1,18 @@
 """
 Checkpoint reader for INTERFACE.md §1.
 
-Training writes ``…/global_step_{step}/hf/`` plus a sidecar ``manifest.json``.
-Eval loads **only** ``hf/`` via transformers. The run is refused if ``g_eval``
-is missing or nonzero — evaluation is always g=0.
+Training writes
+``examples/{example_id}/runs/{experiment_id}/checkpoints/global_step_{step}/hf/``
+plus a sidecar ``manifest.json``. Eval loads **only** ``hf/`` via
+transformers. The run is refused if ``g_eval`` is missing or nonzero —
+evaluation is always g=0. ``run_id`` and ``experiment_id`` are required so
+a checkpoint still maps to the §5.1 table.
 
-``C00`` / ``C00p`` do not train and have no ``train/outputs/`` directory.
-They resolve to the public Base snapshot plus an eval seed.
+The retired ``train/outputs/{run_id}/{student_slug}/global_step_{step}/``
+tree is refused even if a valid-looking manifest sits there.
+
+``C00`` / ``C00p`` do not train and have no ``train/examples/C00/runs/``
+checkpoint. They resolve to the public Base snapshot plus an eval seed.
 """
 
 from __future__ import annotations
@@ -15,6 +21,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional
+
+from opd_eval.paths import StaleCheckpointPath, refuse_legacy_checkpoint_path
 
 
 PUBLIC_BASE_BY_SLUG = {
@@ -39,6 +47,8 @@ class CheckpointSpec:
     g_eval: int
     model_path: str
     manifest_path: str
+    experiment_id: Optional[str] = None
+    example_id: Optional[str] = None
     eval_seed: Optional[int] = None
     is_public_base: bool = False
 
@@ -56,6 +66,10 @@ def read_checkpoint(ckpt_dir: Path) -> CheckpointSpec:
     ``ckpt_dir`` is the ``global_step_{step}/`` directory, not ``hf/``.
     """
     ckpt_dir = Path(ckpt_dir)
+    try:
+        refuse_legacy_checkpoint_path(ckpt_dir)
+    except StaleCheckpointPath as exc:
+        raise CheckpointRefused(str(exc)) from exc
     manifest_path = ckpt_dir / "manifest.json"
     hf_dir = ckpt_dir / "hf"
     if not manifest_path.is_file():
@@ -86,8 +100,15 @@ def read_checkpoint(ckpt_dir: Path) -> CheckpointSpec:
             f"eval loads only hf/ via transformers; missing directory {hf_dir}"
         )
 
+    example_id = str(_require(data, "example_id"))
+    experiment_id = str(_require(data, "experiment_id"))
+    if not example_id or not experiment_id:
+        raise CheckpointRefused("example_id and experiment_id must be non-empty")
+
     return CheckpointSpec(
         run_id=str(_require(data, "run_id")),
+        example_id=example_id,
+        experiment_id=experiment_id,
         student_hf_id=str(_require(data, "student_hf_id")),
         student_slug=str(_require(data, "student_slug")),
         teacher_hf_id=(
