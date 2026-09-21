@@ -15,7 +15,10 @@ Estimators (INTERFACE.md / proposal §2.2 / §5.1):
   ``pass_count`` / ``pass_rate`` from ``ttn_test_200.jsonl``.
 - Two-level bootstrap: resample problems, then resample that problem's K
   completions. Paired stats resample Base and ckpt completions independently
-  after the shared problem draw.
+  after the shared problem draw. Default ``n_boot=10000``: §5.1 decides
+  wins partly on whether a 95% CI excludes zero for effects as small as
+  3.0pp, and 1000 resamples leaves visible Monte-Carlo noise in the CI
+  endpoints while the extra cost is negligible on CPU.
 - McNemar: paired pass@K bits vs Base. Chi-square without continuity
   correction, plus the exact two-sided binomial p-value on discordant pairs.
 """
@@ -37,6 +40,9 @@ class StatsError(ValueError):
 
 VerifiedSeq = Tuple[bool, ...]
 Pool = Dict[str, VerifiedSeq]
+
+# Configurable; 10000 is the §5.1 default (was 1000). See module docstring.
+DEFAULT_N_BOOT = 10000
 
 
 def shrinkage_p_hat(k_successes: int, k_protocol: int) -> float:
@@ -382,7 +388,7 @@ def two_level_bootstrap(
     pool: Pool,
     statistic: Callable[[Pool], float],
     *,
-    n_boot: int = 1000,
+    n_boot: int = DEFAULT_N_BOOT,
     seed: int = 0,
     alpha: float = 0.05,
 ) -> Dict[str, Any]:
@@ -405,7 +411,7 @@ def two_level_bootstrap_paired(
     ckpt: Pool,
     statistic: Callable[[Pool, Pool], float],
     *,
-    n_boot: int = 1000,
+    n_boot: int = DEFAULT_N_BOOT,
     seed: int = 0,
     alpha: float = 0.05,
 ) -> Dict[str, Any]:

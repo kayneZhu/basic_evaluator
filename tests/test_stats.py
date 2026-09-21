@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from opd_eval.samples import write_samples_jsonl
 from opd_eval.stats import (
+    DEFAULT_N_BOOT,
     StatsError,
     avg_at_8,
     delta_log_p_hat,
@@ -34,6 +35,8 @@ from opd_eval.stats import (
     pool_from_records,
     resample_verified,
     shrinkage_p_hat,
+    two_level_bootstrap,
+    two_level_bootstrap_paired,
     two_level_resample_paired,
     two_level_resample_pool,
     _binom_cdf_le,
@@ -226,6 +229,13 @@ class TestTwoLevelBootstrap(unittest.TestCase):
         self.assertEqual(percentile(xs, 1.0), 5.0)
         self.assertEqual(percentile(xs, 0.5), 3.0)
         self.assertEqual(percentile(xs, 0.25), 2.0)
+
+    def test_default_n_boot_is_10000(self):
+        self.assertEqual(DEFAULT_N_BOOT, 10000)
+        self.assertEqual(two_level_bootstrap.__kwdefaults__["n_boot"], 10000)
+        self.assertEqual(
+            two_level_bootstrap_paired.__kwdefaults__["n_boot"], 10000
+        )
 
 
 class TestPoolFromJsonl(unittest.TestCase):
