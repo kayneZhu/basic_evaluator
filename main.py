@@ -29,7 +29,7 @@ class Config:
     MAX_TOKENS = 8192  # 输出长度限制
     TEMPERATURE = 1
     TOP_P = 1
-    STOP_TOKENS = None
+    STOP_TOKENS = None  # string stops only; token-id stops come from the contract
 
     MAX_SAMPLE = None
     PASS_N = 1
@@ -54,6 +54,8 @@ def _print_config():
     print(f"  Temperature:     {Config.TEMPERATURE}")
     print(f"  Top P:           {Config.TOP_P}")
     print(f"  Max Tokens:      {Config.MAX_TOKENS}")
+    from opd_eval.contract import vllm_stop_token_ids
+    print(f"  Stop token ids:  {vllm_stop_token_ids()}  (contract; not tokenizer eos)")
     print(f"  Max Samples:     {Config.MAX_SAMPLE if Config.MAX_SAMPLE is not None else 'All'}")
     print(f"  Output Dir:      {Config.OUTPUT_DIR}")
     if _repeat_enabled():

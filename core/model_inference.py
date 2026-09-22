@@ -4,6 +4,8 @@ from vllm import LLM, SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
 import torch
 
+from opd_eval.contract import vllm_sampling_kwargs
+
 
 def _patch_qwen3_extra_special_tokens():
     """Patch Qwen3 tokenizer to handle extra_special_tokens correctly."""
@@ -98,11 +100,13 @@ class ModelInference:
             formatted_prompts.append(self._messages_to_prompt(prompt, system_prompt))
         
         sampling_params = SamplingParams(
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_tokens,
-            stop=stop,
-            n=n
+            **vllm_sampling_kwargs(
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                stop=stop,
+                n=n,
+            )
         )
         
         outputs = self.llm.generate(formatted_prompts, sampling_params)
@@ -129,11 +133,13 @@ class ModelInference:
             formatted_prompts.append(self._messages_to_prompt(prompt, system_prompt))
         
         sampling_params = SamplingParams(
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_tokens,
-            stop=stop,
-            n=n
+            **vllm_sampling_kwargs(
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                stop=stop,
+                n=n,
+            )
         )
         
         outputs = self.llm.generate(formatted_prompts, sampling_params)

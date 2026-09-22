@@ -8,7 +8,7 @@ Invariant: **every evaluation run is `g=0`** (no teacher prefix, no hint). Same 
 
 Training at `g=0` and evaluation must render the **byte-identical** string. This is the golden form; both sides test against it, and neither side may change it unilaterally.
 
-The authoritative machine-readable copy is `contract/g0_prompt.golden.json` (JSON-escaped, so a trailing newline cannot be silently normalized). This fenced block is documentation; `tests/test_c1_prompt.py` fails if the two diverge.
+The authoritative machine-readable copy is `contract/g0_prompt.golden.json` (JSON-escaped, so a trailing newline cannot be silently normalized). The T(x) terminator and the generation stop set are frozen in that same fixture, not a sibling file: one load path, one hash-guarded document. This fenced block is documentation; `tests/test_c1_prompt.py` fails if the two diverge.
 
 ```
 <|im_start|>system
@@ -27,6 +27,10 @@ Conventions, frozen 2026-09-22:
 - A **format-only** `<think>\n` IS prefilled, carrying no teacher content. Appendix C.3's `g=0` row permits it, and it is required for continuity of the `g`-path: for `g≥1` the assistant side is a true token prefix of `T(x)`, which itself opens with `<think>\n` (Appendix C.1). Omitting it at `g=0` would put a discontinuity exactly on the endpoint that vanilla OPD (run C01) and the Base evaluations live on.
 - `enable_thinking` is NOT passed. Passing `False` injects a *closed* empty think block, which is a different string.
 - Students are `-Base` checkpoints, so the chat template must be verified against the real `Qwen/Qwen3-1.7B-Base` and `Qwen/Qwen3-0.6B-Base` tokenizers on the GPU host. Until then this golden string is **pending verification** and the tests say so rather than passing silently.
+- `T(x)` terminates with `<|im_end|>` = `trace_terminator_token_id` 151645 (Appendix C.1). Teacher traces are not rewritten.
+- The generation stop-token set is `stop_token_ids` `[151645, 151643]`, used identically by training rollouts and evaluation sampling (vLLM `stop_token_ids`). This overrides the Base checkpoints' default `eos_token_id` = `base_default_eos_token_id` 151643. Do not use the tokenizer default.
+- Rationale, frozen with the prompt: the student is trained to emit 151645 because `T(x)` ends there, so stopping only on 151643 would mean the student never terminates and every sample runs to the full 8192 tokens; a Base model can also emit 151643, so including it costs nothing and prevents the same waste.
+- `sha256` is the template-byte digest. `stop_sha256` is the digest of the terminator / stop set / overridden default. Neither side may change these unilaterally; the fixture is the authority.
 
 Verifier: Math-Verify on the student completion (boxed extract), same rule as corpus construction. The training verifier gate also looks only at the student's suffix; eval has no prefix to ignore.
 

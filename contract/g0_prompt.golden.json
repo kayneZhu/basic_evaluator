@@ -4,5 +4,9 @@
   "add_generation_prompt": true,
   "think_prefill": "<think>\n",
   "enable_thinking": null,
-  "sha256": "a2e812d5d90dabcbb78be3a27bc0e37dc2994472d32d6b808fe172e56d6538d6"
+  "sha256": "a2e812d5d90dabcbb78be3a27bc0e37dc2994472d32d6b808fe172e56d6538d6",
+  "trace_terminator_token_id": 151645,
+  "stop_token_ids": [151645, 151643],
+  "base_default_eos_token_id": 151643,
+  "stop_sha256": "3791f0b87ad95be6faf9cc165dbe0eeb6646d11ad5e89463669e508870351bec"
 }

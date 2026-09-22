@@ -2,6 +2,8 @@ import time
 from typing import List, Dict, Any, Optional
 from vllm import LLM, SamplingParams
 
+from opd_eval.contract import vllm_sampling_kwargs
+
 
 def _patch_qwen3_extra_special_tokens():
     """Patch Qwen3 tokenizer to handle extra_special_tokens correctly."""
@@ -99,11 +101,13 @@ class ParallelInference:
             formatted_prompts = [self._messages_to_prompt(p, system_prompt) for p in prompts]
 
         sampling_params = SamplingParams(
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_tokens,
-            stop=stop,
-            n=n
+            **vllm_sampling_kwargs(
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                stop=stop,
+                n=n,
+            )
         )
 
         start_time = time.time()

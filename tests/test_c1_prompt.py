@@ -12,7 +12,6 @@ PENDING GPU VERIFICATION (xfail, not a silent skip).
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import sys
 import unittest
@@ -34,6 +33,17 @@ from adaptors.c1_prompt_mixin import (
     render_c1_chatml,
     render_c1_prompt,
 )
+from opd_eval.contract import (
+    base_default_eos_token_id,
+    golden_g0_prompt,
+    load_g0_golden,
+    stop_convention_digest,
+    stop_token_ids,
+    template_digest,
+    trace_terminator_token_id,
+    vllm_sampling_kwargs,
+    vllm_stop_token_ids,
+)
 
 
 EVAL_ROOT = Path(__file__).resolve().parents[1]
@@ -41,23 +51,6 @@ G0_GOLDEN_JSON = EVAL_ROOT / "contract" / "g0_prompt.golden.json"
 INTERFACE_MD = EVAL_ROOT / "INTERFACE.md"
 _G0_HEADER = "### The g=0 prompt is a cross-side invariant"
 _PLACEHOLDER = "{problem}"
-
-
-def load_g0_golden() -> dict:
-    payload = json.loads(G0_GOLDEN_JSON.read_text(encoding="utf-8"))
-    template = payload.get("template")
-    if not isinstance(template, str) or _PLACEHOLDER not in template:
-        raise ValueError(
-            "g=0 golden JSON is missing a template with {problem}; "
-            "refusing to invent a golden string"
-        )
-    if "<think>" not in template:
-        raise ValueError("golden template is missing the format-only <think> prefill")
-    return payload
-
-
-def golden_g0_prompt(problem: str) -> str:
-    return load_g0_golden()["template"].replace(_PLACEHOLDER, problem, 1)
 
 
 def parse_interface_md_g0_template(interface_md: str) -> str:
@@ -131,8 +124,10 @@ PENDING_GPU_TOKENIZER_VERIFICATION = (
     "AutoTokenizer.from_pretrained(id, trust_remote_code=True) and assert "
     "render_c1_prompt(TOY_PROBLEM, tok) == EXPECTED_RENDERED_C1 exactly "
     "(not a substring). Also confirm enable_thinking is omitted and a "
-    "single format-only <think>\\n is prefilled. The pre-template message "
-    "list is frozen in test_c1_messages_exact."
+    "single format-only <think>\\n is prefilled. Confirm eos_token_id "
+    "equals the contract base_default_eos_token_id and that "
+    "<|im_end|> equals trace_terminator_token_id. The pre-template "
+    "message list is frozen in test_c1_messages_exact."
 )
 
 
@@ -252,9 +247,15 @@ class TestC1RenderedString(unittest.TestCase):
 
 class TestGoldenJsonAuthority(unittest.TestCase):
     def test_recorded_sha256_matches_own_template(self):
+        self.assertTrue(G0_GOLDEN_JSON.is_file())
         golden = load_g0_golden()
         digest = hashlib.sha256(golden["template"].encode("utf-8")).hexdigest()
         self.assertEqual(golden["sha256"], digest)
+        self.assertEqual(template_digest(golden), golden["sha256"])
+
+    def test_recorded_stop_sha256_matches_stop_convention(self):
+        golden = load_g0_golden()
+        self.assertEqual(stop_convention_digest(golden), golden["stop_sha256"])
 
     def test_interface_md_fence_matches_json_template(self):
         md = INTERFACE_MD.read_text(encoding="utf-8")
@@ -262,6 +263,53 @@ class TestGoldenJsonAuthority(unittest.TestCase):
             parse_interface_md_g0_template(md),
             load_g0_golden()["template"],
         )
+
+    def test_interface_md_states_terminator_and_stop_set(self):
+        md = INTERFACE_MD.read_text(encoding="utf-8")
+        golden = load_g0_golden()
+        self.assertIn("trace_terminator_token_id", md)
+        self.assertIn("stop_token_ids", md)
+        self.assertIn(str(golden["trace_terminator_token_id"]), md)
+        self.assertIn(str(golden["base_default_eos_token_id"]), md)
+
+
+class TestStopConventionFromContract(unittest.TestCase):
+    def test_stop_set_and_terminator_are_loaded_from_contract(self):
+        golden = load_g0_golden()
+        self.assertEqual(
+            trace_terminator_token_id(), golden["trace_terminator_token_id"]
+        )
+        self.assertEqual(stop_token_ids(), tuple(golden["stop_token_ids"]))
+        self.assertEqual(
+            base_default_eos_token_id(), golden["base_default_eos_token_id"]
+        )
+        self.assertEqual(vllm_stop_token_ids(), list(golden["stop_token_ids"]))
+        kwargs = vllm_sampling_kwargs(max_tokens=8192, temperature=1.0)
+        self.assertEqual(kwargs["stop_token_ids"], list(golden["stop_token_ids"]))
+        self.assertNotIn("eos_token_id", kwargs)
+
+    def test_base_default_eos_is_in_stop_set_but_is_not_the_terminator(self):
+        golden = load_g0_golden()
+        default = golden["base_default_eos_token_id"]
+        terminator = golden["trace_terminator_token_id"]
+        stops = list(golden["stop_token_ids"])
+        self.assertIn(default, stops)
+        self.assertNotEqual(default, terminator)
+        self.assertIn(terminator, stops)
+        self.assertEqual(base_default_eos_token_id(), default)
+        self.assertEqual(trace_terminator_token_id(), terminator)
+
+    def test_sampling_engines_pass_contract_stop_token_ids(self):
+        model_src = (EVAL_ROOT / "core" / "model_inference.py").read_text(
+            encoding="utf-8"
+        )
+        parallel_src = (EVAL_ROOT / "core" / "parallel_inference.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("vllm_sampling_kwargs", model_src)
+        self.assertIn("vllm_sampling_kwargs", parallel_src)
+        self.assertNotIn("tokenizer.eos_token_id", model_src)
+        self.assertNotIn("tokenizer.eos_token_id", parallel_src)
 
 
 class TestC1LiveTokenizersOrPendingGPU(unittest.TestCase):
@@ -281,6 +329,7 @@ class TestC1LiveTokenizersOrPendingGPU(unittest.TestCase):
             for hf_id in C1_STUDENT_TOKENIZER_IDS:
                 self.assertIn(hf_id, PENDING_GPU_TOKENIZER_VERIFICATION)
             return
+        golden = load_g0_golden()
         for hf_id, tok in loaded.items():
             got = render_c1_prompt(TOY_PROBLEM, tok)
             self.assertEqual(
@@ -291,6 +340,21 @@ class TestC1LiveTokenizersOrPendingGPU(unittest.TestCase):
                     f"EXPECTED_RENDERED_C1.\n--- got ---\n{got!r}\n"
                     f"--- expected ---\n{EXPECTED_RENDERED_C1!r}"
                 ),
+            )
+            self.assertEqual(
+                tok.eos_token_id,
+                golden["base_default_eos_token_id"],
+                msg=f"{hf_id} eos_token_id is not the recorded Base default",
+            )
+            self.assertEqual(
+                tok.convert_tokens_to_ids("<|im_end|>"),
+                golden["trace_terminator_token_id"],
+                msg=f"{hf_id} <|im_end|> is not the recorded terminator",
+            )
+            self.assertEqual(
+                tok.convert_tokens_to_ids("<|endoftext|>"),
+                golden["base_default_eos_token_id"],
+                msg=f"{hf_id} <|endoftext|> is not the recorded Base default",
             )
 
 
