@@ -156,6 +156,13 @@ def _try_load_base_tokenizers():
 
 
 class TestC1Messages(unittest.TestCase):
+    def test_tests_package_is_eval_not_verl(self):
+        import tests as tests_pkg
+
+        origin = Path(tests_pkg.__file__).resolve()
+        self.assertNotIn("third_party", origin.parts)
+        self.assertTrue((origin.parent.parent / "opd_eval").is_dir())
+
     def test_c1_messages_exact(self):
         self.assertEqual(build_c1_messages(TOY_PROBLEM), EXPECTED_MESSAGES)
 
