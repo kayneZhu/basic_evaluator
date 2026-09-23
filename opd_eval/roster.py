@@ -21,7 +21,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional
 
+from .length import STUDENT_MAX_NEW_TOKENS
 from .paths import protocol_profile_name, samples_output_dir
+from .validation import (
+    DT_TRAIN_SUBSET_SIZE,
+    VAL_BENCHMARK_DT_TRAIN,
+    VAL_BENCHMARK_HELD_OUT,
+    VAL_K,
+    VAL_SURFACE_DT_TRAIN,
+    VAL_SURFACE_HELD_OUT,
+    VAL_TEMPERATURE,
+)
 
 
 @dataclass(frozen=True)
@@ -32,7 +42,7 @@ class ProtocolProfile:
     temperature: float
     adaptor_key: str
     data_path: str
-    max_new_tokens: int = 8192
+    max_new_tokens: int = STUDENT_MAX_NEW_TOKENS
     notes: str = ""
 
     @property
@@ -77,6 +87,35 @@ ROSTER: List[ProtocolProfile] = [
         notes=(
             "Held-out bins. Supply Base pass@16 bin assignment from the "
             "training side; do not reuse jsonl pass_count/pass_rate."
+        ),
+    ),
+    # Cheap mid-run validation (INTERFACE.md §5). Same C.1 adaptor; K=8.
+    # Selection uses val_or1_200 only; val_dt_train is for curves.
+    ProtocolProfile(
+        surface=VAL_SURFACE_HELD_OUT,
+        benchmark_id=VAL_BENCHMARK_HELD_OUT,
+        k=VAL_K,
+        temperature=VAL_TEMPERATURE,
+        adaptor_key="c1_or1_200",
+        data_path="data/ttn_test_200.jsonl",
+        notes=(
+            "Mid-run validation on OR1-200 held-out every 50 steps. "
+            "pass@1 (sample_idx 0) + pass@8 from the same K=8 pool. "
+            "Always g=0 / τ=0. Primary metric for best-ckpt selection."
+        ),
+    ),
+    ProtocolProfile(
+        surface=VAL_SURFACE_DT_TRAIN,
+        benchmark_id=VAL_BENCHMARK_DT_TRAIN,
+        k=VAL_K,
+        temperature=VAL_TEMPERATURE,
+        adaptor_key="c1_or1_200",
+        data_path="data/dt_train_subset.jsonl",
+        notes=(
+            f"Mid-run train-curve surface: seeded Dt subset "
+            f"(default n={DT_TRAIN_SUBSET_SIZE}). Same pass@1/pass@8 "
+            "estimators as held-out. Never used for checkpoint selection. "
+            "Training supplies the subset jsonl path."
         ),
     ),
 ]

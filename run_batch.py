@@ -34,8 +34,8 @@ _PROBE100_BASE = {
     "GPU_MEMORY_UTILIZATION": 0.95,
     "MAX_NUM_SEQS": 256,
     "BATCH_SIZE": 32,
-    "MAX_MODEL_LEN": 10000,
-    "MAX_TOKENS": 8192,
+    "MAX_MODEL_LEN": 11264,
+    "MAX_TOKENS": 10240,
 }
 
 JOBS = [{**_PROBE100_BASE, "G_LEVELS": [g]} for g in [0, 0.25, 0.5, 0.75, 1.0]]

@@ -12,10 +12,10 @@ being overridden.
 
 The student is trained to emit the terminator because T(x) ends there,
 so stopping only on the Base default would mean the student never
-terminates and every sample runs to the full 8192 tokens; conversely a
-Base model can spontaneously emit the default, so including it in the
-stop set costs nothing and prevents the same waste. Do not read
-``tokenizer.eos_token_id`` anywhere on this path.
+terminates and every sample runs to the full student response budget
+(10240 tokens); conversely a Base model can spontaneously emit the
+default, so including it in the stop set costs nothing and prevents the
+same waste. Do not read ``tokenizer.eos_token_id`` anywhere on this path.
 """
 
 from __future__ import annotations

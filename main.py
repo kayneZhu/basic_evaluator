@@ -19,14 +19,15 @@ class Config:
     TENSOR_PARALLEL_SIZE = 1
     DATA_PARALLEL_SIZE = 4  # 几 个独立进程，各在 4 张 GPU 上推理
     GPU_MEMORY_UTILIZATION = 0.95
-    MAX_MODEL_LEN = 10000  # 输入+输出总长度限制
+    # prompt ≤1024 + response ≤10240 (opd_eval.length); do not shrink below.
+    MAX_MODEL_LEN = 11264
 
     USE_PARALLEL = True
     MAX_NUM_SEQS = 256
     # 大 batch 减少 generate() 调用次数开销；vLLM 内部靠 MAX_NUM_SEQS 控制并发
     BATCH_SIZE = 256
 
-    MAX_TOKENS = 8192  # 输出长度限制
+    MAX_TOKENS = 10240  # student response cap (INTERFACE.md §4a)
     TEMPERATURE = 1
     TOP_P = 1
     STOP_TOKENS = None  # string stops only; token-id stops come from the contract

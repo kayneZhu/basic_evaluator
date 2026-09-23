@@ -117,11 +117,13 @@ class TestRosterIsAConfigList(unittest.TestCase):
         self.assertEqual(aime.adaptor_key, "c1_aime_union")
         self.assertEqual(or1.k, 128)
         self.assertEqual(or1.adaptor_key, "c1_or1_200")
+        self.assertEqual(aime.max_new_tokens, 10240)
+        self.assertEqual(or1.max_new_tokens, 10240)
         for p in ROSTER:
             self.assertFalse(hasattr(p, "pass_count"))
             self.assertFalse(hasattr(p, "pass_rate"))
             self.assertNotIn("bin", p.__dataclass_fields__)
-
+            self.assertEqual(p.max_new_tokens, 10240)
     def test_protocol_profile_prevents_disk_collision(self):
         nine = ProtocolProfile(
             surface="nine_bench",

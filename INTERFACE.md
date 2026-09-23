@@ -29,7 +29,7 @@ Conventions, frozen 2026-09-22:
 - Students are `-Base` checkpoints, so the chat template must be verified against the real `Qwen/Qwen3-1.7B-Base` and `Qwen/Qwen3-0.6B-Base` tokenizers on the GPU host. Until then this golden string is **pending verification** and the tests say so rather than passing silently.
 - `T(x)` terminates with `<|im_end|>` = `trace_terminator_token_id` 151645 (Appendix C.1). Teacher traces are not rewritten.
 - The generation stop-token set is `stop_token_ids` `[151645, 151643]`, used identically by training rollouts and evaluation sampling (vLLM `stop_token_ids`). This overrides the Base checkpoints' default `eos_token_id` = `base_default_eos_token_id` 151643. Do not use the tokenizer default.
-- Rationale, frozen with the prompt: the student is trained to emit 151645 because `T(x)` ends there, so stopping only on 151643 would mean the student never terminates and every sample runs to the full 8192 tokens; a Base model can also emit 151643, so including it costs nothing and prevents the same waste.
+- Rationale, frozen with the prompt: the student is trained to emit 151645 because `T(x)` ends there, so stopping only on 151643 would mean the student never terminates and every sample runs to the full student response budget (10240 tokens); a Base model can also emit 151643, so including it costs nothing and prevents the same waste.
 - `sha256` is the template-byte digest. `stop_sha256` is the digest of the terminator / stop set / overridden default. Neither side may change these unilaterally; the fixture is the authority.
 
 Verifier: Math-Verify on the student completion (boxed extract), same rule as corpus construction. The training verifier gate also looks only at the student's suffix; eval has no prefix to ignore.
@@ -196,8 +196,83 @@ OR1-200 bins (corpus protocol, applied to held-out): **B0** $=0/16$; **B1–B3**
 | AIME union pass@$K$ | **512** (lead 2026-09-21; Appendix E Q4 closed, floor kept). Sensitivity set $\{64,128,256,512\}$. | $T=1$ (lead, 2026-09-21) |
 | AIME union avg@8 | `sample_idx` 0–7 of the pass@$K$ pool (shared draw, lead 2026-09-21) | $T=1$ |
 | Nine-benchmark pass@1 | 8 samples, then average | **$T=1$** (§5.1) |
-| OR1-200 held-out | **$K=128$** | $T=1$ (lead, 2026-09-21) |
+| OR1-200 held-out (paper) | **$K=128$** | $T=1$ (lead, 2026-09-21) |
+| Mid-run validation (OR1-200 + Dt subset) | **$K=8$** — see §5 | $T=1$ |
 | SciBench / GPQA-D / coding | $K$ still **not stated** in §5.1 | $T=1$ (lead, 2026-09-21) |
 | Corpus / binning pass@16 (not a trained-ckpt eval) | 16, $T=1$, `max_new_tokens=8192` | $T=1$ (listed so bins stay aligned; not an eval-of-ckpt protocol) |
 
 Eval sampling is always `g=0`.
+
+---
+
+## 4a. Length budget
+
+Frozen 2026-09-23 (proposal v4.3):
+
+| Quantity | Value | Notes |
+| --- | --- | --- |
+| Prompt budget | **1024** | Chat template + problem. |
+| Student response / `max_new_tokens` | **10240** | Paper ckpt eval and mid-run validation. Prefix + student continuation share the response region in training. |
+| `max_model_len` | **11264** | `1024 + 10240`. |
+| Teacher acceptance `|T|` | **≤ 8192** | Correct ∧ natural EOS ∧ length; leaves the student ≥ 2048 tokens of headroom. |
+
+Constants live in `opd_eval/length.py`. Existing **U1 / U4 corpus pass@16 shards written under the old 8192 student cap are valid and reusable** — do not reject them and do not require a re-run when the student eval budget moves to 10240.
+
+---
+
+## 5. Mid-run validation and best / final checkpoint
+
+Every method reports **both** the best checkpoint (selected on OR1-200 held-out) and the final checkpoint. OR1-200 is used only for selection, never for hyperparameter tuning. Validation is always **τ=0 / g=0** (student solves independently; same C.1 prompt as §0).
+
+### Cadence
+
+| Event | Cadence | Notes |
+| --- | --- | --- |
+| Weight checkpoint save | every **100** steps | `global_step_{step}/hf/` + `manifest.json` |
+| Validation metrics | every **50** steps | May fall on non-save steps (50, 150, …); those rows feed curves only |
+
+### Cheap protocol (shared K=8 pool)
+
+| Field | Value |
+| --- | --- |
+| Surfaces | `val_or1_200` (held-out, **selection**); `val_dt_train` (seeded Dt subset, **curves only**, default n=64) |
+| $K$ | **8** |
+| Temperature | $T=1$ |
+| `max_new_tokens` | **10240** |
+| Metrics from the same pool | **pass@1** = mean over problems of `verified[sample_idx=0]`; **pass@8** = mean of `1[k≥1]` over sample_idx 0–7; optional `avg_at_8` = mean of `verified` over 0–7 |
+| Primary selection metric | **pass@8** on `val_or1_200` |
+
+Roster entries: `surface=val_or1_200` / `val_dt_train` with `benchmark_id=or1_200` / `dt_train`. Output layout still keys on the protocol profile (`val_or1_200_k8_t1`, …) so the paper OR1-200 $K=128$ job cannot collide.
+
+### Metrics file
+
+```
+eval/outputs/{run_id}/{student_slug}/validation/metrics.jsonl
+```
+
+One row per `(step, surface)`. Required fields:
+
+| Field | Type | Rule |
+| --- | --- | --- |
+| `step` | int | Global training step. |
+| `surface` | string | `val_or1_200` or `val_dt_train`. |
+| `pass_at_1` | float | See above. |
+| `pass_at_8` | float | See above. |
+| `n_problems` | int | Pool size. |
+| `g` | int | Must be `0`. |
+
+Recommended: `benchmark_id`, `k` (=8), `avg_at_8`, `max_new_tokens` (=10240).
+
+### Selection rule
+
+1. Restrict to rows with `surface=val_or1_200`.
+2. Restrict to **saved** checkpoint steps (default: `step % 100 == 0`), or an explicit `--saved-steps` list from training.
+3. Pick **best** = argmax `pass_at_8` (tie → later step).
+4. **Final** = latest saved step that has a held-out row (or an explicit `--final-step`).
+5. Write both together:
+
+```
+eval/outputs/{run_id}/{student_slug}/validation/selection.json
+```
+
+Helper: `opd_eval/validation.py` + `scripts/select_best_checkpoint.py`. Training may call the same selectors after each validation write.

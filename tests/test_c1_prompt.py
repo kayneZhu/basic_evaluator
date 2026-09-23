@@ -291,7 +291,7 @@ class TestStopConventionFromContract(unittest.TestCase):
             base_default_eos_token_id(), golden["base_default_eos_token_id"]
         )
         self.assertEqual(vllm_stop_token_ids(), list(golden["stop_token_ids"]))
-        kwargs = vllm_sampling_kwargs(max_tokens=8192, temperature=1.0)
+        kwargs = vllm_sampling_kwargs(max_tokens=10240, temperature=1.0)
         self.assertEqual(kwargs["stop_token_ids"], list(golden["stop_token_ids"]))
         self.assertNotIn("eos_token_id", kwargs)
 
