@@ -26,6 +26,7 @@ from .paths import protocol_profile_name, samples_output_dir
 from .sampling import EVAL_TEMPERATURE, EVAL_TOP_P
 from .validation import (
     DEFAULT_HELDOUT_H_PATH,
+    DEFAULT_HS256_PATH,
     DT_TRAIN_SUBSET_SIZE,
     VAL_BENCHMARK_DT_TRAIN,
     VAL_BENCHMARK_HELD_OUT,
@@ -103,13 +104,15 @@ ROSTER: List[ProtocolProfile] = [
         k=VAL_K,
         temperature=VAL_TEMPERATURE,
         top_p=VAL_TOP_P,
-        adaptor_key="c1_or1_200",
-        data_path=str(DEFAULT_HELDOUT_H_PATH),
+        adaptor_key="c1_or1_200",  # naming-only; schema is H/Hs jsonl
+        data_path=str(DEFAULT_HS256_PATH),
         notes=(
-            "Mid-run validation on held-out H every 50 steps. "
-            "pass@1 (sample_idx 0) + pass@8 from the same K=8 pool. "
-            "Always g=0 / τ=0. Primary metric for best-ckpt selection. "
-            "Sampler T=0.6 / top_p=0.95."
+            "Offline checkpoint validation on fixed Hs (64/bin, 256, "
+            "sidecar hs256.jsonl). pass@1 (sample_idx 0) + pass@8 from "
+            "the same K=8 pool; per-bin via row `bin`. Always g=0 / τ=0. "
+            "Primary metric for appendix best-ckpt selection. "
+            "Sampler T=0.6 / top_p=0.95. In-trainer pass@1 (n=1) uses "
+            "the same Hs via train val.parquet."
         ),
     ),
     ProtocolProfile(

@@ -2,27 +2,27 @@
 Cheap τ=0 validation metrics and best/final checkpoint selection.
 
 Training saves weights every ``CKPT_SAVE_CADENCE_STEPS`` (100) and runs
-validation every ``VAL_CADENCE_STEPS`` (50). Selection looks only at
-**saved** steps that have a held-out validation row, picks the best by
-``PRIMARY_METRIC`` (pass@8 on held-out H), and always reports that best
-together with the final saved step.
+in-trainer pass@1 every ``VAL_CADENCE_STEPS`` (50) on fixed Hs (64/bin).
+Offline checkpoint validation reuses the same Hs sidecar at K=8
+(pass@1 + pass@8, per bin). Selection looks only at **saved** steps that
+have a held-out validation row, picks the best by ``PRIMARY_METRIC``
+(pass@8 on Hs), and always reports that best together with the final
+saved step. Appendix-only; main text reports final checkpoints.
 
 Validation is always g=0 / τ=0 (student solves independently). Sampler
-matches paper eval: T=0.6, top_p=0.95. The same K=8 pool yields both
-pass@1 (sample_idx 0) and pass@8 (1[k≥1] over 0..7). A Dt train-subset
-surface uses the same estimators for train-vs-held-out curves and is
-**never** used for selection. OR1-200 is retired.
+matches paper eval: T=0.6, top_p=0.95. OR1-200 is retired.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .length import STUDENT_MAX_NEW_TOKENS
-from .sampling import EVAL_TEMPERATURE, EVAL_TOP_P
+from .sampling import BINNING_SEED, EVAL_TEMPERATURE, EVAL_TOP_P
 from .stats import Pool, StatsError, mean_pass_at_k, per_problem_stats
 
 
@@ -34,16 +34,22 @@ VAL_TOP_P = EVAL_TOP_P
 VAL_CADENCE_STEPS = 50
 CKPT_SAVE_CADENCE_STEPS = 100
 
-# Surfaces. Selection uses held-out H only (OR1-200 retired).
+# Surfaces. Selection uses held-out Hs (subset of H); OR1-200 retired.
 VAL_SURFACE_HELD_OUT = "val_heldout_h"
 VAL_SURFACE_DT_TRAIN = "val_dt_train"
 VAL_BENCHMARK_HELD_OUT = "heldout_h"
 VAL_BENCHMARK_DT_TRAIN = "dt_train"
 
-# Canonical H path on the GPU box (fields = OR1 pool + ``bin``).
+BIN_NAMES = ("B0", "B1", "B2", "B3")
+HS_PER_BIN = 64
+HS_SEED = BINNING_SEED
+HS_SIDECAR_NAME = "hs256.jsonl"
+
+# Canonical H / Hs paths on the GPU box (fields = OR1 pool + ``bin``).
 DEFAULT_HELDOUT_H_PATH = Path(
     "/root/autodl-tmp/data/processed/heldout_h600/h600.jsonl"
 )
+DEFAULT_HS256_PATH = DEFAULT_HELDOUT_H_PATH.with_name(HS_SIDECAR_NAME)
 
 PRIMARY_METRIC = "pass_at_8"
 SELECTION_SURFACE = VAL_SURFACE_HELD_OUT
@@ -54,7 +60,7 @@ DT_TRAIN_SUBSET_SIZE = 64
 
 @dataclass(frozen=True)
 class ValidationProtocol:
-    """Cheap mid-run eval settings. Always τ=0 / g=0."""
+    """Cheap mid-run / offline-ckpt eval settings. Always τ=0 / g=0."""
 
     k: int = VAL_K
     temperature: float = VAL_TEMPERATURE
@@ -65,6 +71,9 @@ class ValidationProtocol:
     primary_metric: str = PRIMARY_METRIC
     selection_surface: str = SELECTION_SURFACE
     heldout_h_path: str = str(DEFAULT_HELDOUT_H_PATH)
+    hs_path: str = str(DEFAULT_HS256_PATH)
+    hs_per_bin: int = HS_PER_BIN
+    hs_seed: int = HS_SEED
     g: int = 0  # τ=0; INTERFACE invariant
 
     def as_dict(self) -> Dict[str, Any]:
@@ -72,6 +81,57 @@ class ValidationProtocol:
 
 
 DEFAULT_PROTOCOL = ValidationProtocol()
+
+
+def resolve_hs_path(
+    *,
+    heldout_h: Path | str | None = None,
+    explicit: Path | str | None = None,
+) -> Path:
+    """Resolve Hs sidecar: explicit → ``OPD_HS256`` → next to H → default."""
+    if explicit is not None:
+        return Path(explicit)
+    env = os.environ.get("OPD_HS256")
+    if env:
+        return Path(env)
+    if heldout_h is not None:
+        return Path(heldout_h).with_name(HS_SIDECAR_NAME)
+    return DEFAULT_HS256_PATH
+
+
+def load_hs_records(path: Path | str | None = None) -> List[Dict[str, Any]]:
+    """Load Hs jsonl (offline K=8 eval input). Refuses if missing."""
+    src = Path(path) if path is not None else resolve_hs_path()
+    if not src.is_file():
+        raise FileNotFoundError(
+            f"Hs sidecar missing at {src}. Build via train "
+            "`prepare_hs_val_parquet` (written next to H as hs256.jsonl) "
+            "or set OPD_HS256."
+        )
+    rows: List[Dict[str, Any]] = []
+    for line in src.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            rows.append(json.loads(line))
+    if not rows:
+        raise StatsError(f"Hs sidecar empty: {src}")
+    return rows
+
+
+def bin_by_problem_id(records: Sequence[Mapping[str, Any]]) -> Dict[str, str]:
+    """Map problem_id / or1_id → bin label from Hs (or H) rows."""
+    out: Dict[str, str] = {}
+    for row in records:
+        pid = str(row.get("or1_id") or row.get("problem_id") or "")
+        if not pid:
+            continue
+        bin_name = row.get("bin")
+        if bin_name is None:
+            continue
+        out[pid] = str(bin_name)
+        if "index" in row:
+            out[f"or1:{int(row['index'])}"] = str(bin_name)
+    return out
 
 
 def is_saved_checkpoint_step(
@@ -85,6 +145,7 @@ def is_saved_checkpoint_step(
 def is_validation_step(
     step: int, *, cadence: int = VAL_CADENCE_STEPS
 ) -> bool:
+    """True at in-trainer val cadence (pass@1 on Hs) and offline K=8 steps."""
     if step <= 0:
         return False
     return step % cadence == 0
@@ -109,23 +170,28 @@ def pass_at_8_from_pool(pool: Pool) -> float:
     return mean_pass_at_k(pool, VAL_K)
 
 
-def metrics_from_pool(pool: Pool, *, k_protocol: int = VAL_K) -> Dict[str, Any]:
+def metrics_from_pool(
+    pool: Pool,
+    *,
+    k_protocol: int = VAL_K,
+    bin_by_pid: Optional[Mapping[str, str]] = None,
+) -> Dict[str, Any]:
     """
     Cheap validation metrics from a complete K-sample pool.
 
     Requires ``k_protocol ≥ 8`` so pass@8 and (optionally) avg@8 are defined.
+    When ``bin_by_pid`` is provided, also returns ``per_bin`` with the same
+    estimators for B0..B3.
     """
     if k_protocol < VAL_K:
         raise StatsError(
             f"validation pool needs K≥{VAL_K}, got {k_protocol}"
         )
-    # Truncate view to first VAL_K for the cheap estimators if a larger
-    # paper pool is reused; mid-run validation always writes K=8.
     if k_protocol != VAL_K:
         pool = {pid: verified[:VAL_K] for pid, verified in pool.items()}
     stats = per_problem_stats(pool, VAL_K)
     avg8 = sum(s.avg8 for s in stats.values()) / len(stats)  # type: ignore[arg-type]
-    return {
+    out: Dict[str, Any] = {
         "n_problems": len(pool),
         "k": VAL_K,
         "pass_at_1": pass_at_1_from_pool(pool),
@@ -134,6 +200,26 @@ def metrics_from_pool(pool: Pool, *, k_protocol: int = VAL_K) -> Dict[str, Any]:
         "g": 0,
         "max_new_tokens": STUDENT_MAX_NEW_TOKENS,
     }
+    if bin_by_pid is not None:
+        per_bin: Dict[str, Dict[str, Any]] = {}
+        for bin_name in BIN_NAMES:
+            sub = {
+                pid: verified
+                for pid, verified in pool.items()
+                if bin_by_pid.get(pid) == bin_name
+            }
+            if not sub:
+                continue
+            sub_stats = per_problem_stats(sub, VAL_K)
+            per_bin[bin_name] = {
+                "n_problems": len(sub),
+                "pass_at_1": pass_at_1_from_pool(sub),
+                "pass_at_8": pass_at_8_from_pool(sub),
+                "avg_at_8": sum(s.avg8 for s in sub_stats.values())
+                / len(sub_stats),  # type: ignore[arg-type]
+            }
+        out["per_bin"] = per_bin
+    return out
 
 
 @dataclass(frozen=True)

@@ -26,13 +26,16 @@ from opd_eval.validation import (
     VAL_K,
     VAL_SURFACE_DT_TRAIN,
     VAL_SURFACE_HELD_OUT,
+    bin_by_problem_id,
     is_saved_checkpoint_step,
     is_validation_step,
+    load_hs_records,
     load_metrics_jsonl,
     metrics_from_pool,
     parse_metrics_row,
     pass_at_1_from_pool,
     pass_at_8_from_pool,
+    resolve_hs_path,
     select_best_and_final,
     write_metrics_jsonl,
 )
@@ -109,6 +112,55 @@ class TestValidationMetrics(unittest.TestCase):
         self.assertEqual(m["max_new_tokens"], 10240)
         self.assertAlmostEqual(m["pass_at_1"], 1.0 / 3.0)
         self.assertAlmostEqual(m["pass_at_8"], 2.0 / 3.0)
+
+    def test_metrics_per_bin(self):
+        bits = {
+            "or1:0": (True,) + (False,) * 7,   # B0
+            "or1:1": (False,) * 8,             # B0
+            "or1:10": (True,) + (False,) * 7,  # B1
+            "or1:20": (False, True) + (False,) * 6,  # B2
+        }
+        bins = {
+            "or1:0": "B0",
+            "or1:1": "B0",
+            "or1:10": "B1",
+            "or1:20": "B2",
+        }
+        pool = pool_from_records(_pool_records(bits), VAL_K)
+        m = metrics_from_pool(pool, bin_by_pid=bins)
+        self.assertIn("per_bin", m)
+        self.assertEqual(m["per_bin"]["B0"]["n_problems"], 2)
+        self.assertAlmostEqual(m["per_bin"]["B0"]["pass_at_1"], 0.5)
+        self.assertAlmostEqual(m["per_bin"]["B0"]["pass_at_8"], 0.5)
+        self.assertAlmostEqual(m["per_bin"]["B1"]["pass_at_1"], 1.0)
+        self.assertAlmostEqual(m["per_bin"]["B2"]["pass_at_1"], 0.0)
+        self.assertAlmostEqual(m["per_bin"]["B2"]["pass_at_8"], 1.0)
+
+    def test_hs_sidecar_load_and_resolve(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            h = root / "h600.jsonl"
+            hs = root / "hs256.jsonl"
+            rows = [
+                {
+                    "or1_id": f"or1:{i}",
+                    "problem_id": f"or1:{i}",
+                    "index": i,
+                    "bin": "B0",
+                    "question": "q",
+                    "ground_truth": "1",
+                }
+                for i in range(3)
+            ]
+            hs.write_text(
+                "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+            )
+            loaded = load_hs_records(hs)
+            self.assertEqual(len(loaded), 3)
+            self.assertEqual(resolve_hs_path(heldout_h=h), hs)
+            self.assertEqual(
+                bin_by_problem_id(loaded)["or1:1"], "B0"
+            )
 
     def test_rejects_nonzero_g(self):
         with self.assertRaises(StatsError):
@@ -215,8 +267,11 @@ class TestValidationRoster(unittest.TestCase):
         self.assertEqual(held.k, 8)
         self.assertEqual(held.temperature, 0.6)
         self.assertEqual(held.top_p, 0.95)
+        self.assertIn("hs256.jsonl", held.data_path)
+        self.assertEqual(held.adaptor_key, "c1_or1_200")
         self.assertEqual(train.k, 8)
         self.assertEqual(paper.k, 128)
+        self.assertIn("h600.jsonl", paper.data_path)
         self.assertNotEqual(held.output_dir("o", "C01", "slug", 100),
                             paper.output_dir("o", "C01", "slug", 100))
 

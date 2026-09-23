@@ -73,7 +73,10 @@ class C1MathAdaptor(C1PromptMixin, BaseAdaptor):
 
     def get_variant_metadata(self, item: Dict[str, Any]) -> Dict[str, Any]:
         # Intentionally omit pass_count / pass_rate — those are not bins.
-        return {"problem_id": self.get_problem_id(item)}
+        meta: Dict[str, Any] = {"problem_id": self.get_problem_id(item)}
+        if item.get("bin") is not None:
+            meta["bin"] = str(item["bin"])
+        return meta
 
 
 class C1AimeUnionAdaptor(C1MathAdaptor):
@@ -82,5 +85,11 @@ class C1AimeUnionAdaptor(C1MathAdaptor):
 
 
 class C1OR1200Adaptor(C1MathAdaptor):
+    """OR1 / held-out H / Hs jsonl. Key name ``c1_or1_200`` is historical only."""
+
     def get_problem_id(self, item: Dict[str, Any]) -> str:
+        if item.get("or1_id"):
+            return str(item["or1_id"])
+        if item.get("problem_id") and str(item["problem_id"]).startswith("or1:"):
+            return str(item["problem_id"])
         return or1_problem_id(item)
