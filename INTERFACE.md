@@ -158,7 +158,7 @@ Let $K$ be the protocol $K$ for that surface (below). Per problem, $k=\#\{\text{
 
 - **pass@K**: $1[k\ge 1]$ (unbiased estimator may be used later; the contract only guarantees raw bits).
 - **avg@8**: mean of `verified` over `sample_idx` 0–7 on the AIME union.
-- **learned / forgotten vs Base**: compare pass@K bits. learned = Base 0 → ckpt 1; forgotten = Base 1 → ckpt 0. On OR1-200, each count is divided by the feasible denominator (learned / # Base-unsolvable in the bin; forgotten / # Base-solvable in the bin).
+- **learned / forgotten vs Base**: compare pass@K bits. learned = Base 0 → ckpt 1; forgotten = Base 1 → ckpt 0. On held-out H, each count is divided by the feasible denominator (learned / # Base-unsolvable in the bin; forgotten / # Base-solvable in the bin).
 - **$\Delta\log\hat p$**: $\hat p=(k+\tfrac12)/(K+1)$ (shrinkage); $\Delta$ is ckpt minus Base on the same `problem_id`.
 - **Two-level bootstrap**: resample problems × resample the $K$ completions.
 - **McNemar**: paired pass@K bits vs Base on the same problems.
@@ -177,31 +177,53 @@ Training-only curves $M_0$, $M_{\rm tf}$, and the terminal $g_{\rm curr}/m$ hist
 | AIME union | 同并集 avg@8 | avg@8 |
 | Nine-benchmark suite | 「九基准」only — **names not listed** | pass@1, 8-sample average, **6 ckpts only** |
 | Harm / OOD | SciBench; GPQA-D; 「一个零训练 coding 基准」(**unnamed**) | hung on the **same 6 ckpts**; 「有没有伤」only |
-| Held-out bins | OR1-200, same bin protocol as the corpus | $K=128$: $\Delta\log\hat p$, learned/forgotten / feasible denoms, Base absolute level |
+| Held-out bins | H (150/bin, \|H\|=600), same bin protocol as the corpus | $K=128$: $\Delta\log\hat p$, learned/forgotten / feasible denoms, Base absolute level |
 
-OR1-200 bins (corpus protocol, applied to held-out): **B0** $=0/16$; **B1–B3** = equal-mass tertiles of the rest; paper reports the realized cuts. Bins are a property of Base pass@16, not of the jsonl schema.
+Held-out bins (corpus protocol, applied to H): **B0** $=0/16$; **B1** $=1$–$3$; **B2** $=4$–$8$; **B3** $=9$–$16$ (fixed a priori; B3 = strictly $>50\%$). Bins are a property of Base pass@16 under the **eval sampler**, not of the jsonl schema. OR1-200 is **retired** and must not appear in any evaluation result.
 
 §5.1 does **not** name the nine benchmarks, the coding set, the 6 ckpt IDs, or a `problem_id` map. The §5.5 budget line lists nine-benchmark ckpts as C00, C01, C04, M1, S2, T1 — that list is **not** in §5.1.
 
-`benchmark_id` strings to use once the lead names the missing sets (placeholders, not official names): `aime_union`, `aime26`, `or1_200`, plus one id per named/TBD set.
+`benchmark_id` strings to use once the lead names the missing sets (placeholders, not official names): `aime_union`, `aime26`, `heldout_h`, plus one id per named/TBD set.
 
 ---
 
-## 4. $K$ and temperatures (from §5.1 only)
+## 4. $K$ and temperatures
 
-§5.1 states $T=1$ only for the nine-benchmark pass@1 and the corpus pass@16. The lead froze the rest on 2026-09-21: **$T=1$ on every surface**, and **avg@8 is `sample_idx` 0–7 of the same pass@$K$ pool**, not a separate draw (so avg@8 and pass@$K$ are paired on identical completions). See `docs/eng/decisions.md`.
+Frozen 2026-09-24 (overrides the earlier $T=1$ lead freeze for paper eval / binning / validation):
 
-| Surface | $K$ / samples | Temperature |
+| Quantity | Value | Notes |
 | --- | --- | --- |
-| AIME union pass@$K$ | **512** (lead 2026-09-21; Appendix E Q4 closed, floor kept). Sensitivity set $\{64,128,256,512\}$. | $T=1$ (lead, 2026-09-21) |
-| AIME union avg@8 | `sample_idx` 0–7 of the pass@$K$ pool (shared draw, lead 2026-09-21) | $T=1$ |
-| Nine-benchmark pass@1 | 8 samples, then average | **$T=1$** (§5.1) |
-| OR1-200 held-out (paper) | **$K=128$** | $T=1$ (lead, 2026-09-21) |
-| Mid-run validation (OR1-200 + Dt subset) | **$K=8$** — see §5 | $T=1$ |
-| SciBench / GPQA-D / coding | $K$ still **not stated** in §5.1 | $T=1$ (lead, 2026-09-21) |
-| Corpus / binning pass@16 (not a trained-ckpt eval) | 16, $T=1$, `max_new_tokens=8192` | $T=1$ (listed so bins stay aligned; not an eval-of-ckpt protocol) |
+| Eval / validation / binning temperature | **$T=0.6$** | Unlocking / Qwen-recommended; bins label eval outcomes |
+| Eval / validation / binning `top_p` | **$0.95$** | Same sampler family |
+| Training rollout temperature | **$T=1.0$** | Unbiased on-policy; **not** the eval default |
+| Training rollout `top_p` | **$1.0$** | Must not inherit eval `top_p` |
+| avg@8 | `sample_idx` 0–7 of the same pass@$K$ pool | Shared draw |
 
-Eval sampling is always `g=0`.
+| Surface | $K$ / samples | Sampler |
+| --- | --- | --- |
+| AIME union pass@$K$ | **512** (sensitivity $\{64,128,256,512\}$). | $T=0.6$, `top_p=0.95`, `max_new_tokens=10240` |
+| AIME union avg@8 | `sample_idx` 0–7 of the pass@$K$ pool | same |
+| Nine-benchmark pass@1 | 8 samples, then average | $T=0.6$, `top_p=0.95` |
+| Held-out H (paper) | **$K=128$** | $T=0.6$, `top_p=0.95` |
+| Mid-run validation (H + Dt subset) | **$K=8$** — see §5 | $T=0.6$, `top_p=0.95` |
+| SciBench / GPQA-D / coding | $K$ still **not stated** in §5.1 | $T=0.6$, `top_p=0.95` |
+| Corpus / binning pass@16 (not a trained-ckpt eval) | 16 | $T=0.6$, `top_p=0.95`, `max_new_tokens=10240` |
+
+Eval sampling is always `g=0`. Defaults live in `opd_eval/sampling.py` and `main.Config`.
+
+### 4b. Evaluation vs binning seeds
+
+Binning samples must use seeds **disjoint** from every evaluation seed (avoids regression to the mean on shared draws).
+
+| Role | Seed | Registered where |
+| --- | --- | --- |
+| C00 Base eval | **0** | `train/examples/C00/config.yaml` `eval_seed`; `EVAL_SEED_C00` |
+| C00′ (C00p) Base eval | **1** | `train/examples/C00p/config.yaml` `eval_seed`; `EVAL_SEED_C00P` |
+| Bootstrap CI default | **0** | `opd_eval/stats.py` (already in the set) |
+| **Eval seed set** | `{0, 1}` | `opd_eval/sampling.py` `EVAL_SEEDS` |
+| Binning / H / Dt construction | **20260924** | `BINNING_SEED`; `train` `rollout_passk` refuses any seed in `EVAL_SEEDS` |
+
+Old U1 (seed 42, $T=1.0$) is retired; no compatibility required.
 
 ---
 
@@ -212,17 +234,27 @@ Frozen 2026-09-23 (proposal v4.3):
 | Quantity | Value | Notes |
 | --- | --- | --- |
 | Prompt budget | **1024** | Chat template + problem. |
-| Student response / `max_new_tokens` | **10240** | Paper ckpt eval and mid-run validation. Prefix + student continuation share the response region in training. |
+| Student response / `max_new_tokens` | **10240** | Paper ckpt eval, mid-run validation, and binning pass@16. Prefix + student continuation share the response region in training. |
 | `max_model_len` | **11264** | `1024 + 10240`. |
 | Teacher acceptance `|T|` | **≤ 8192** | Correct ∧ natural EOS ∧ length; leaves the student ≥ 2048 tokens of headroom. |
 
-Constants live in `opd_eval/length.py`. Existing **U1 / U4 corpus pass@16 shards written under the old 8192 student cap are valid and reusable** — do not reject them and do not require a re-run when the student eval budget moves to 10240.
+Constants live in `opd_eval/length.py` / `opd_eval/sampling.py`. Old U1 shards (seed 42, $T=1.0$, cap 8192) are **retired**; new binning uses the eval sampler and 10240.
 
 ---
 
 ## 5. Mid-run validation and best / final checkpoint
 
-Every method reports **both** the best checkpoint (selected on OR1-200 held-out) and the final checkpoint. OR1-200 is used only for selection, never for hyperparameter tuning. Validation is always **τ=0 / g=0** (student solves independently; same C.1 prompt as §0).
+Every method reports **both** the best checkpoint (selected on held-out **H**) and the final checkpoint. H is used only for selection, never for hyperparameter tuning. Validation is always **τ=0 / g=0** (student solves independently; same C.1 prompt as §0). OR1-200 is retired.
+
+### Held-out H
+
+| Field | Value |
+| --- | --- |
+| Canonical path | `/root/autodl-tmp/data/processed/heldout_h600/h600.jsonl` |
+| Size | 150 per bin × 4 = **600**, stratified from OR1-2k after pass@16 binning |
+| Fields | Same as the OR1 training-pool jsonl **plus** a `bin` field (`B0`–`B3`) |
+| Disjointness | $H \cap D_t = \emptyset$ |
+| Missing file | Training **refuses to start** (configurable via `OPD_HELDOUT_H` / `heldout_h_path`) |
 
 ### Cadence
 
@@ -235,14 +267,14 @@ Every method reports **both** the best checkpoint (selected on OR1-200 held-out)
 
 | Field | Value |
 | --- | --- |
-| Surfaces | `val_or1_200` (held-out, **selection**); `val_dt_train` (seeded Dt subset, **curves only**, default n=64) |
+| Surfaces | `val_heldout_h` (held-out H, **selection**); `val_dt_train` (seeded Dt subset, **curves only**, default n=64) |
 | $K$ | **8** |
-| Temperature | $T=1$ |
+| Temperature / `top_p` | $T=0.6$ / $0.95$ |
 | `max_new_tokens` | **10240** |
 | Metrics from the same pool | **pass@1** = mean over problems of `verified[sample_idx=0]`; **pass@8** = mean of `1[k≥1]` over sample_idx 0–7; optional `avg_at_8` = mean of `verified` over 0–7 |
-| Primary selection metric | **pass@8** on `val_or1_200` |
+| Primary selection metric | **pass@8** on `val_heldout_h` |
 
-Roster entries: `surface=val_or1_200` / `val_dt_train` with `benchmark_id=or1_200` / `dt_train`. Output layout still keys on the protocol profile (`val_or1_200_k8_t1`, …) so the paper OR1-200 $K=128$ job cannot collide.
+Roster entries: `surface=val_heldout_h` / `val_dt_train` with `benchmark_id=heldout_h` / `dt_train`. Output layout still keys on the protocol profile (`val_heldout_h_k8_t0.6`, …) so the paper H $K=128$ job cannot collide.
 
 ### Metrics file
 
@@ -255,17 +287,17 @@ One row per `(step, surface)`. Required fields:
 | Field | Type | Rule |
 | --- | --- | --- |
 | `step` | int | Global training step. |
-| `surface` | string | `val_or1_200` or `val_dt_train`. |
+| `surface` | string | `val_heldout_h` or `val_dt_train`. |
 | `pass_at_1` | float | See above. |
 | `pass_at_8` | float | See above. |
 | `n_problems` | int | Pool size. |
 | `g` | int | Must be `0`. |
 
-Recommended: `benchmark_id`, `k` (=8), `avg_at_8`, `max_new_tokens` (=10240).
+Recommended: `benchmark_id`, `k` (=8), `avg_at_8`, `max_new_tokens` (=10240), `temperature`, `top_p`.
 
 ### Selection rule
 
-1. Restrict to rows with `surface=val_or1_200`.
+1. Restrict to rows with `surface=val_heldout_h`.
 2. Restrict to **saved** checkpoint steps (default: `step % 100 == 0`), or an explicit `--saved-steps` list from training.
 3. Pick **best** = argmax `pass_at_8` (tie → later step).
 4. **Final** = latest saved step that has a held-out row (or an explicit `--final-step`).

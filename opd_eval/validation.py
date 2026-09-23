@@ -4,13 +4,14 @@ Cheap τ=0 validation metrics and best/final checkpoint selection.
 Training saves weights every ``CKPT_SAVE_CADENCE_STEPS`` (100) and runs
 validation every ``VAL_CADENCE_STEPS`` (50). Selection looks only at
 **saved** steps that have a held-out validation row, picks the best by
-``PRIMARY_METRIC`` (pass@8 on OR1-200), and always reports that best
+``PRIMARY_METRIC`` (pass@8 on held-out H), and always reports that best
 together with the final saved step.
 
-Validation is always g=0 / τ=0 (student solves independently). The same
-K=8 pool yields both pass@1 (sample_idx 0) and pass@8 (1[k≥1] over 0..7).
-A Dt train-subset surface uses the same estimators for train-vs-held-out
-curves and is **never** used for selection.
+Validation is always g=0 / τ=0 (student solves independently). Sampler
+matches paper eval: T=0.6, top_p=0.95. The same K=8 pool yields both
+pass@1 (sample_idx 0) and pass@8 (1[k≥1] over 0..7). A Dt train-subset
+surface uses the same estimators for train-vs-held-out curves and is
+**never** used for selection. OR1-200 is retired.
 """
 
 from __future__ import annotations
@@ -21,21 +22,28 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .length import STUDENT_MAX_NEW_TOKENS
+from .sampling import EVAL_TEMPERATURE, EVAL_TOP_P
 from .stats import Pool, StatsError, mean_pass_at_k, per_problem_stats
 
 
 # ── Protocol (INTERFACE.md §5) ───────────────────────────────────────────────
 
 VAL_K = 8
-VAL_TEMPERATURE = 1.0
+VAL_TEMPERATURE = EVAL_TEMPERATURE
+VAL_TOP_P = EVAL_TOP_P
 VAL_CADENCE_STEPS = 50
 CKPT_SAVE_CADENCE_STEPS = 100
 
-# Surfaces. Selection uses held-out only.
-VAL_SURFACE_HELD_OUT = "val_or1_200"
+# Surfaces. Selection uses held-out H only (OR1-200 retired).
+VAL_SURFACE_HELD_OUT = "val_heldout_h"
 VAL_SURFACE_DT_TRAIN = "val_dt_train"
-VAL_BENCHMARK_HELD_OUT = "or1_200"
+VAL_BENCHMARK_HELD_OUT = "heldout_h"
 VAL_BENCHMARK_DT_TRAIN = "dt_train"
+
+# Canonical H path on the GPU box (fields = OR1 pool + ``bin``).
+DEFAULT_HELDOUT_H_PATH = Path(
+    "/root/autodl-tmp/data/processed/heldout_h600/h600.jsonl"
+)
 
 PRIMARY_METRIC = "pass_at_8"
 SELECTION_SURFACE = VAL_SURFACE_HELD_OUT
@@ -50,11 +58,13 @@ class ValidationProtocol:
 
     k: int = VAL_K
     temperature: float = VAL_TEMPERATURE
+    top_p: float = VAL_TOP_P
     max_new_tokens: int = STUDENT_MAX_NEW_TOKENS
     cadence_steps: int = VAL_CADENCE_STEPS
     ckpt_save_cadence_steps: int = CKPT_SAVE_CADENCE_STEPS
     primary_metric: str = PRIMARY_METRIC
     selection_surface: str = SELECTION_SURFACE
+    heldout_h_path: str = str(DEFAULT_HELDOUT_H_PATH)
     g: int = 0  # τ=0; INTERFACE invariant
 
     def as_dict(self) -> Dict[str, Any]:

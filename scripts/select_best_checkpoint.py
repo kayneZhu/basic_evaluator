@@ -3,7 +3,7 @@
 Select best + final checkpoints from mid-run validation metrics.
 
 Reads ``metrics.jsonl`` (INTERFACE.md §5), keeps rows on the held-out
-surface ``val_or1_200``, restricts to saved-checkpoint steps (default
+surface ``val_heldout_h``, restricts to saved-checkpoint steps (default
 every 100), and writes ``selection.json`` reporting best and final
 together. Primary metric defaults to pass@8.
 

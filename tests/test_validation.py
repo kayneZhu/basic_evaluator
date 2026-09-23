@@ -58,13 +58,20 @@ class TestLengthBudget(unittest.TestCase):
         self.assertEqual(STUDENT_MAX_NEW_TOKENS, 10240)
         self.assertEqual(MAX_MODEL_LEN, 11264)
         self.assertEqual(TEACHER_ACCEPT_MAX_TOKENS, 8192)
-        self.assertEqual(CORPUS_PASS16_MAX_NEW_TOKENS, 8192)
+        self.assertEqual(CORPUS_PASS16_MAX_NEW_TOKENS, 10240)
 
     def test_main_config_matches(self):
-        from main import Config
+        import importlib
+
+        import main as main_mod
+
+        importlib.reload(main_mod)
+        Config = main_mod.Config
 
         self.assertEqual(Config.MAX_TOKENS, STUDENT_MAX_NEW_TOKENS)
         self.assertEqual(Config.MAX_MODEL_LEN, MAX_MODEL_LEN)
+        self.assertEqual(Config.TEMPERATURE, 0.6)
+        self.assertEqual(Config.TOP_P, 0.95)
 
     def test_roster_default_max_new_tokens(self):
         for p in ROSTER:
@@ -76,8 +83,10 @@ class TestLengthBudget(unittest.TestCase):
         )
         self.assertIn("10240", md)
         self.assertIn("11264", md)
-        self.assertIn("U1", md)
-        self.assertIn("reusable", md.lower())
+        self.assertIn("0.6", md)
+        self.assertIn("0.95", md)
+        self.assertIn("20260924", md)
+        self.assertIn("heldout_h600", md)
 
 
 class TestValidationMetrics(unittest.TestCase):
@@ -197,13 +206,15 @@ class TestBestFinalSelection(unittest.TestCase):
 class TestValidationRoster(unittest.TestCase):
     def test_validation_profiles_wired(self):
         held = find_profile(
-            surface=VAL_SURFACE_HELD_OUT, benchmark_id="or1_200", k=8
+            surface=VAL_SURFACE_HELD_OUT, benchmark_id="heldout_h", k=8
         )
         train = find_profile(
             surface=VAL_SURFACE_DT_TRAIN, benchmark_id="dt_train", k=8
         )
-        paper = find_profile(surface="or1_200", benchmark_id="or1_200", k=128)
+        paper = find_profile(surface="heldout_h", benchmark_id="heldout_h", k=128)
         self.assertEqual(held.k, 8)
+        self.assertEqual(held.temperature, 0.6)
+        self.assertEqual(held.top_p, 0.95)
         self.assertEqual(train.k, 8)
         self.assertEqual(paper.k, 128)
         self.assertNotEqual(held.output_dir("o", "C01", "slug", 100),

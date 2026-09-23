@@ -28,8 +28,9 @@ class Config:
     BATCH_SIZE = 256
 
     MAX_TOKENS = 10240  # student response cap (INTERFACE.md §4a)
-    TEMPERATURE = 1
-    TOP_P = 1
+    # Paper eval sampler (decisions 2026-09-24); training rollouts stay T=1/top_p=1.
+    TEMPERATURE = 0.6
+    TOP_P = 0.95
     STOP_TOKENS = None  # string stops only; token-id stops come from the contract
 
     MAX_SAMPLE = None

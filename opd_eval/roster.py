@@ -6,14 +6,14 @@ The set is not frozen and must not be a hardcoded nine. The same
 (surface / K / temperature). Append entries here; do not special-case
 a length of nine in code.
 
-Wired now: AIME24+25+26 union (K=512) and OR1-200 held-out (K=128),
-both through the C.1 mixin. Nine-benchmark and harm/OOD entries are
+Wired now: AIME24+25+26 union (K=512) and held-out H (K=128), both
+through the C.1 mixin. Nine-benchmark and harm/OOD entries are
 appended when the lead names them. HumanEval+ is registered on the
 factory as a stub (``NotImplementedError``), not as a live roster job.
 
-Bins for OR1-200 are a training-side input (fresh Base pass@16). They
-are not a roster field and must not be read from ``ttn_test_200.jsonl``
-``pass_count`` / ``pass_rate`` (previous paper's pass@32).
+OR1-200 is retired. Held-out bins come from H (150/bin, |H|=600),
+binned by Base pass@16 under the eval sampler — not from
+``ttn_test_200.jsonl`` ``pass_count`` / ``pass_rate``.
 """
 
 from __future__ import annotations
@@ -23,7 +23,9 @@ from typing import List, Optional
 
 from .length import STUDENT_MAX_NEW_TOKENS
 from .paths import protocol_profile_name, samples_output_dir
+from .sampling import EVAL_TEMPERATURE, EVAL_TOP_P
 from .validation import (
+    DEFAULT_HELDOUT_H_PATH,
     DT_TRAIN_SUBSET_SIZE,
     VAL_BENCHMARK_DT_TRAIN,
     VAL_BENCHMARK_HELD_OUT,
@@ -31,6 +33,7 @@ from .validation import (
     VAL_SURFACE_DT_TRAIN,
     VAL_SURFACE_HELD_OUT,
     VAL_TEMPERATURE,
+    VAL_TOP_P,
 )
 
 
@@ -42,6 +45,7 @@ class ProtocolProfile:
     temperature: float
     adaptor_key: str
     data_path: str
+    top_p: float = EVAL_TOP_P
     max_new_tokens: int = STUDENT_MAX_NEW_TOKENS
     notes: str = ""
 
@@ -68,40 +72,44 @@ ROSTER: List[ProtocolProfile] = [
         surface="aime_union",
         benchmark_id="aime_union",
         k=512,
-        temperature=1.0,
+        temperature=EVAL_TEMPERATURE,
+        top_p=EVAL_TOP_P,
         adaptor_key="c1_aime_union",
         data_path="data/aime24_25_26_bench_schema.jsonl",
         notes=(
             "90-problem AIME24+25+26 union. avg@8 is sample_idx 0–7 of this "
             "same pool. AIME26 is a problem_id prefix filter (aime26:), "
-            "not a second draw."
+            "not a second draw. Sampler T=0.6 / top_p=0.95."
         ),
     ),
     ProtocolProfile(
-        surface="or1_200",
-        benchmark_id="or1_200",
+        surface="heldout_h",
+        benchmark_id=VAL_BENCHMARK_HELD_OUT,
         k=128,
-        temperature=1.0,
+        temperature=EVAL_TEMPERATURE,
+        top_p=EVAL_TOP_P,
         adaptor_key="c1_or1_200",
-        data_path="data/ttn_test_200.jsonl",
+        data_path=str(DEFAULT_HELDOUT_H_PATH),
         notes=(
-            "Held-out bins. Supply Base pass@16 bin assignment from the "
-            "training side; do not reuse jsonl pass_count/pass_rate."
+            "Held-out H (|H|=600, 150/bin). Supply Base pass@16 bin "
+            "labels from the training side; OR1-200 is retired."
         ),
     ),
     # Cheap mid-run validation (INTERFACE.md §5). Same C.1 adaptor; K=8.
-    # Selection uses val_or1_200 only; val_dt_train is for curves.
+    # Selection uses val_heldout_h only; val_dt_train is for curves.
     ProtocolProfile(
         surface=VAL_SURFACE_HELD_OUT,
         benchmark_id=VAL_BENCHMARK_HELD_OUT,
         k=VAL_K,
         temperature=VAL_TEMPERATURE,
+        top_p=VAL_TOP_P,
         adaptor_key="c1_or1_200",
-        data_path="data/ttn_test_200.jsonl",
+        data_path=str(DEFAULT_HELDOUT_H_PATH),
         notes=(
-            "Mid-run validation on OR1-200 held-out every 50 steps. "
+            "Mid-run validation on held-out H every 50 steps. "
             "pass@1 (sample_idx 0) + pass@8 from the same K=8 pool. "
-            "Always g=0 / τ=0. Primary metric for best-ckpt selection."
+            "Always g=0 / τ=0. Primary metric for best-ckpt selection. "
+            "Sampler T=0.6 / top_p=0.95."
         ),
     ),
     ProtocolProfile(
@@ -109,6 +117,7 @@ ROSTER: List[ProtocolProfile] = [
         benchmark_id=VAL_BENCHMARK_DT_TRAIN,
         k=VAL_K,
         temperature=VAL_TEMPERATURE,
+        top_p=VAL_TOP_P,
         adaptor_key="c1_or1_200",
         data_path="data/dt_train_subset.jsonl",
         notes=(

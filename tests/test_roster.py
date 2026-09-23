@@ -102,7 +102,7 @@ class TestRosterIsAConfigList(unittest.TestCase):
             surface="harm",
             benchmark_id="scibench",
             k=8,
-            temperature=1.0,
+            temperature=0.6,
             adaptor_key="c1_scibench",
             data_path="data/scibench_train.jsonl",
         )
@@ -111,25 +111,30 @@ class TestRosterIsAConfigList(unittest.TestCase):
 
     def test_wired_surfaces(self):
         aime = find_profile(surface="aime_union", benchmark_id="aime_union")
-        or1 = find_profile(surface="or1_200", benchmark_id="or1_200")
+        held = find_profile(surface="heldout_h", benchmark_id="heldout_h")
         self.assertEqual(aime.k, 512)
-        self.assertEqual(aime.temperature, 1.0)
+        self.assertEqual(aime.temperature, 0.6)
+        self.assertEqual(aime.top_p, 0.95)
         self.assertEqual(aime.adaptor_key, "c1_aime_union")
-        self.assertEqual(or1.k, 128)
-        self.assertEqual(or1.adaptor_key, "c1_or1_200")
+        self.assertEqual(held.k, 128)
+        self.assertEqual(held.temperature, 0.6)
+        self.assertEqual(held.top_p, 0.95)
+        self.assertEqual(held.adaptor_key, "c1_or1_200")
         self.assertEqual(aime.max_new_tokens, 10240)
-        self.assertEqual(or1.max_new_tokens, 10240)
+        self.assertEqual(held.max_new_tokens, 10240)
         for p in ROSTER:
             self.assertFalse(hasattr(p, "pass_count"))
             self.assertFalse(hasattr(p, "pass_rate"))
             self.assertNotIn("bin", p.__dataclass_fields__)
             self.assertEqual(p.max_new_tokens, 10240)
+            self.assertEqual(p.temperature, 0.6)
+            self.assertEqual(p.top_p, 0.95)
     def test_protocol_profile_prevents_disk_collision(self):
         nine = ProtocolProfile(
             surface="nine_bench",
             benchmark_id="scibench",
             k=8,
-            temperature=1.0,
+            temperature=0.6,
             adaptor_key="c1_scibench",
             data_path="data/scibench_train.jsonl",
         )
@@ -137,7 +142,7 @@ class TestRosterIsAConfigList(unittest.TestCase):
             surface="harm",
             benchmark_id="scibench",
             k=8,
-            temperature=1.0,
+            temperature=0.6,
             adaptor_key="c1_scibench",
             data_path="data/scibench_train.jsonl",
         )
@@ -145,14 +150,14 @@ class TestRosterIsAConfigList(unittest.TestCase):
         b = harm.output_dir("outputs", "C01", "qwen3-1.7b-base", 1000)
         self.assertNotEqual(a, b)
         self.assertEqual(a.parent, b.parent)
-        self.assertTrue(str(a).endswith("scibench/nine_bench_k8_t1"))
-        self.assertTrue(str(b).endswith("scibench/harm_k8_t1"))
+        self.assertTrue(str(a).endswith("scibench/nine_bench_k8_t0.6"))
+        self.assertTrue(str(b).endswith("scibench/harm_k8_t0.6"))
         # Same helper used by the writer.
         self.assertEqual(
             a,
             samples_output_dir(
                 "outputs", "C01", "qwen3-1.7b-base", 1000,
-                "scibench", "nine_bench", 8, 1.0,
+                "scibench", "nine_bench", 8, 0.6,
             ),
         )
 
