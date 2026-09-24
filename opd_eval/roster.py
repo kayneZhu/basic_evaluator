@@ -166,6 +166,37 @@ ROSTER: List[ProtocolProfile] = [
         data_path="data/hmmt25_bench_schema.jsonl",
         notes="HMMT Feb 2025 (30) under C.1.",
     ),
+    # Mini protocol sets (materialized under eval_mini/; H-mini=25/bin).
+    ProtocolProfile(
+        surface="h_hard_mini",
+        benchmark_id="h_hard_mini",
+        k=512,
+        temperature=EVAL_TEMPERATURE,
+        top_p=EVAL_TOP_P,
+        adaptor_key="c1_or1_200",
+        data_path="/root/autodl-tmp/data/processed/eval_mini/h_hard_mini.jsonl",
+        notes="H-hard-mini: 80 from B0 of H\\Hs; H-mini B0 is a prefix.",
+    ),
+    ProtocolProfile(
+        surface="h_mini",
+        benchmark_id="h_mini",
+        k=16,
+        temperature=EVAL_TEMPERATURE,
+        top_p=EVAL_TOP_P,
+        adaptor_key="c1_or1_200",
+        data_path="/root/autodl-tmp/data/processed/eval_mini/h_mini.jsonl",
+        notes="H-mini: 25/bin from H\\Hs (100). B0 reuses H-hard-mini samples.",
+    ),
+    ProtocolProfile(
+        surface="math500_mini",
+        benchmark_id="math500_mini",
+        k=512,
+        temperature=EVAL_TEMPERATURE,
+        top_p=EVAL_TOP_P,
+        adaptor_key="c1_math500",
+        data_path="/root/autodl-tmp/data/processed/eval_mini/math500_mini.jsonl",
+        notes="MATH500-mini: 200, selection seed 20260924.",
+    ),
     # Cheap mid-run validation (INTERFACE.md §5). Same C.1 adaptor; K=8.
     # Selection uses val_heldout_h only; val_dt_train is for curves.
     ProtocolProfile(

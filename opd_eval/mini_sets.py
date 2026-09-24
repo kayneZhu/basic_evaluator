@@ -1,9 +1,12 @@
-"""Build deterministic mini eval sets (parametrized; do not materialize H-mini by default).
+"""Build deterministic mini eval sets.
 
-H-mini: stratified from H \\ Hs (per-bin size is an owner parameter).
+H-mini: stratified from H \\ Hs (owner freeze: 25/bin = 100).
 H-hard-mini: 80 from B0 of H \\ Hs, with H-mini's B0 problems as its prefix.
 MATH500-mini: 200 problems, selection seed 20260924 (binning seed is OK here —
 this is a *subset draw*, not an evaluation sample seed).
+
+Materialized at ``/root/autodl-tmp/data/processed/eval_mini/`` (plus local
+mirror under ``docs/eng/eval_mini/``).
 """
 
 from __future__ import annotations
@@ -18,6 +21,9 @@ BIN_NAMES = ("B0", "B1", "B2", "B3")
 MATH500_MINI_SEED = 20260924  # selection seed for MATH500-mini only
 MATH500_MINI_SIZE = 200
 H_HARD_MINI_SIZE = 80
+H_MINI_PER_BIN = 25  # owner freeze 2026-09-24
+H_MINI_SEED = 20260924
+DEFAULT_EVAL_MINI_DIR = Path("/root/autodl-tmp/data/processed/eval_mini")
 
 
 def read_jsonl(path: Path) -> List[Dict[str, Any]]:
@@ -152,10 +158,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--h-mini-per-bin",
         type=int,
         default=None,
-        help="If set, write h_mini.jsonl (owner chooses 20 or 25). "
+        help="If set, write h_mini.jsonl (owner freeze: 25/bin). "
         "Omit to skip materializing H-mini.",
     )
-    p.add_argument("--h-mini-seed", type=int, default=20260924)
+    p.add_argument("--h-mini-seed", type=int, default=H_MINI_SEED)
     p.add_argument("--h-hard-mini-size", type=int, default=H_HARD_MINI_SIZE)
     p.add_argument("--write-h-hard-mini", action="store_true")
     p.add_argument("--write-math500-mini", action="store_true")

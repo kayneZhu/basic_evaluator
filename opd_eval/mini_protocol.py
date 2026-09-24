@@ -36,6 +36,12 @@ from opd_eval.stats import (
 
 GenerateFn = Callable[[str, int], str]  # (prompt, seed) -> response text
 
+# Canonical materialized mini sets (server). Local mirror: docs/eng/eval_mini/.
+DEFAULT_EVAL_MINI_DIR = Path("/root/autodl-tmp/data/processed/eval_mini")
+DEFAULT_H_MINI_PATH = DEFAULT_EVAL_MINI_DIR / "h_mini.jsonl"
+DEFAULT_H_HARD_MINI_PATH = DEFAULT_EVAL_MINI_DIR / "h_hard_mini.jsonl"
+DEFAULT_MATH500_MINI_PATH = DEFAULT_EVAL_MINI_DIR / "math500_mini.jsonl"
+
 
 @dataclass(frozen=True)
 class MiniJob:
@@ -51,40 +57,40 @@ class MiniJob:
 
 def default_mini_jobs(
     *,
-    h_hard_mini: Path,
-    h_mini: Path,
-    math500_mini: Path,
-    aime_union: Path,
-    amc23: Path,
-    hmmt25: Path,
+    h_hard_mini: Path = DEFAULT_H_HARD_MINI_PATH,
+    h_mini: Path = DEFAULT_H_MINI_PATH,
+    math500_mini: Path = DEFAULT_MATH500_MINI_PATH,
+    aime_union: Path = Path("data/aime24_25_26_bench_schema.jsonl"),
+    amc23: Path = Path("data/amc23_bench_schema.jsonl"),
+    hmmt25: Path = Path("data/hmmt25_bench_schema.jsonl"),
 ) -> List[MiniJob]:
     return [
         MiniJob(
             surface="h_hard_mini",
             benchmark_id="h_hard_mini",
             adaptor_key="c1_or1_200",
-            data_path=h_hard_mini,
+            data_path=Path(h_hard_mini),
             n=512,
         ),
         MiniJob(
             surface="math500_mini",
             benchmark_id="math500_mini",
             adaptor_key="c1_math500",
-            data_path=math500_mini,
+            data_path=Path(math500_mini),
             n=512,
         ),
         MiniJob(
             surface="aime_union",
             benchmark_id="aime_union",
             adaptor_key="c1_aime_union",
-            data_path=aime_union,
+            data_path=Path(aime_union),
             n=512,
         ),
         MiniJob(
             surface="h_mini",
             benchmark_id="h_mini",
             adaptor_key="c1_or1_200",
-            data_path=h_mini,
+            data_path=Path(h_mini),
             n=16,
             reuse_from="h_hard_mini",
             bin_exclude="B0",
@@ -93,14 +99,14 @@ def default_mini_jobs(
             surface="amc23",
             benchmark_id="amc23",
             adaptor_key="c1_amc23",
-            data_path=amc23,
+            data_path=Path(amc23),
             n=16,
         ),
         MiniJob(
             surface="hmmt25",
             benchmark_id="hmmt25",
             adaptor_key="c1_hmmt25",
-            data_path=hmmt25,
+            data_path=Path(hmmt25),
             n=16,
         ),
     ]
@@ -348,9 +354,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model-dir", type=Path, required=True)
     p.add_argument("--out-root", type=Path, required=True)
     p.add_argument("--base-seed", type=int, default=EVAL_SEED_MINI_PROTOCOL)
-    p.add_argument("--h-hard-mini", type=Path, required=True)
-    p.add_argument("--h-mini", type=Path, required=True)
-    p.add_argument("--math500-mini", type=Path, required=True)
+    p.add_argument(
+        "--h-hard-mini",
+        type=Path,
+        default=DEFAULT_H_HARD_MINI_PATH,
+        help=f"default: {DEFAULT_H_HARD_MINI_PATH}",
+    )
+    p.add_argument(
+        "--h-mini",
+        type=Path,
+        default=DEFAULT_H_MINI_PATH,
+        help=f"default: {DEFAULT_H_MINI_PATH}",
+    )
+    p.add_argument(
+        "--math500-mini",
+        type=Path,
+        default=DEFAULT_MATH500_MINI_PATH,
+        help=f"default: {DEFAULT_MATH500_MINI_PATH}",
+    )
     p.add_argument(
         "--aime-union",
         type=Path,

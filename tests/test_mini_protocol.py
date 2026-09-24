@@ -224,6 +224,29 @@ class TestMiniSets(unittest.TestCase):
             self.assertFalse((out / "h_mini.jsonl").exists())
             self.assertTrue((out / "math500_mini.jsonl").is_file())
 
+    def test_driver_defaults_point_at_server_eval_mini(self):
+        from opd_eval.mini_protocol import (
+            DEFAULT_EVAL_MINI_DIR,
+            DEFAULT_H_HARD_MINI_PATH,
+            DEFAULT_H_MINI_PATH,
+            DEFAULT_MATH500_MINI_PATH,
+            default_mini_jobs,
+        )
+        from opd_eval.roster import find_profile
+
+        self.assertEqual(
+            DEFAULT_EVAL_MINI_DIR,
+            Path("/root/autodl-tmp/data/processed/eval_mini"),
+        )
+        jobs = default_mini_jobs()
+        by = {j.benchmark_id: j for j in jobs}
+        self.assertEqual(by["h_mini"].data_path, DEFAULT_H_MINI_PATH)
+        self.assertEqual(by["h_hard_mini"].data_path, DEFAULT_H_HARD_MINI_PATH)
+        self.assertEqual(by["math500_mini"].data_path, DEFAULT_MATH500_MINI_PATH)
+        for surface in ("h_mini", "h_hard_mini", "math500_mini"):
+            p = find_profile(surface=surface, benchmark_id=surface)
+            self.assertTrue(str(p.data_path).startswith(str(DEFAULT_EVAL_MINI_DIR)))
+
 
 class TestMiniProtocolResume(unittest.TestCase):
     def test_plan_skips_done_and_refuses_binning_seed(self):
