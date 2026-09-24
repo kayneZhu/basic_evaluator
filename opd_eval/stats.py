@@ -3,12 +3,16 @@
 
 Estimators (INTERFACE.md / proposal §2.2 / §5.1):
 
-- pass@K: raw ``1[k ≥ 1]`` per problem (not the Chen unbiased estimator).
+- pass@k: Chen et al. (2021) unbiased estimator
+  ``1 - C(n-c,k)/C(n,k)`` (numerically stable product form), for k=1..n.
+  Per-problem ``(n, c)`` and the curve are the primary metric.
+- raw_pass_bit / ``pass_at_k_bit``: legacy ``1[c ≥ 1]`` kept for learned /
+  forgotten / McNemar which still operate on a single pass@K bit.
 - avg@8: mean of ``verified`` over global ``sample_idx`` 0–7 of the **same**
   pass@K pool. Missing any of those eight indices is an error.
 - ``p̂ = (k + ½) / (K + 1)`` (shrinkage). ``Δlog p̂`` is ckpt minus Base
   on the same ``problem_id``, natural log.
-- learned / forgotten: Base 0→ckpt 1 / Base 1→ckpt 0 on the pass@K bits.
+- learned / forgotten: Base 0→ckpt 1 / Base 1→ckpt 0 on the raw pass@K bits.
   On OR1-200 bins the counts are divided by the feasible denominators
   (learned / # Base-unsolvable in the bin; forgotten / # Base-solvable).
   Bins are an **input** (training-side pass@16). Do not read
@@ -62,7 +66,42 @@ def delta_log_p_hat(k_base: int, k_ckpt: int, k_protocol: int) -> float:
 
 
 def pass_at_k_bit(k_successes: int) -> int:
+    """Legacy raw bit ``1[c ≥ 1]``. Prefer :func:`unbiased_pass_at_k` for metrics."""
     return 1 if k_successes >= 1 else 0
+
+
+def unbiased_pass_at_k(n: int, c: int, k: int) -> float:
+    """Chen et al. 2021: ``1 - C(n-c, k) / C(n, k)``, numerically stable.
+
+    Uses the product form
+    ``1 - ∏_{i=0}^{k-1} (n - c - i) / (n - i)`` so large ``n`` does not
+    overflow ``math.comb``. Returns 0 when ``c == 0`` or ``k == 0``; 1 when
+    ``n - c < k`` (every k-subset hits a success).
+    """
+    if n < 0 or c < 0 or k < 0:
+        raise StatsError(f"n={n}, c={c}, k={k} must be non-negative")
+    if c > n:
+        raise StatsError(f"c={c} > n={n}")
+    if k == 0:
+        return 0.0
+    if c == 0:
+        return 0.0
+    if k > n:
+        raise StatsError(f"k={k} > n={n}")
+    if n - c < k:
+        return 1.0
+    # Product over i=0..k-1 of (n-c-i)/(n-i).
+    prob_miss = 1.0
+    for i in range(k):
+        prob_miss *= (n - c - i) / (n - i)
+    return 1.0 - prob_miss
+
+
+def unbiased_pass_at_k_curve(n: int, c: int) -> Dict[int, float]:
+    """``{k: unbiased_pass_at_k(n, c, k)}`` for ``k = 1 .. n``."""
+    if n < 0 or c < 0 or c > n:
+        raise StatsError(f"illegal (n, c)=({n}, {c})")
+    return {k: unbiased_pass_at_k(n, c, k) for k in range(1, n + 1)}
 
 
 def _successes(verified: Sequence[bool]) -> int:
@@ -137,6 +176,15 @@ class PerProblemStats:
     p_hat: float
     log_p_hat: float
     avg8: Optional[float]
+    pass_at_k: Optional[Dict[int, float]] = None
+
+    @property
+    def n(self) -> int:
+        return self.k_protocol
+
+    @property
+    def c(self) -> int:
+        return self.k
 
 
 def per_problem_stats(pool: Pool, k_protocol: int) -> Dict[str, PerProblemStats]:
@@ -156,13 +204,29 @@ def per_problem_stats(pool: Pool, k_protocol: int) -> Dict[str, PerProblemStats]
             p_hat=shrinkage_p_hat(k, k_protocol),
             log_p_hat=log_p_hat(k, k_protocol),
             avg8=avg8,
+            pass_at_k=unbiased_pass_at_k_curve(k_protocol, k),
         )
     return out
 
 
+def mean_unbiased_pass_at_k(pool: Pool, k_protocol: int, k: int) -> float:
+    """Mean of Chen unbiased pass@k over problems (each problem has n=k_protocol)."""
+    stats = per_problem_stats(pool, k_protocol)
+    return sum(s.pass_at_k[k] for s in stats.values()) / len(stats)  # type: ignore[index]
+
+
 def mean_pass_at_k(pool: Pool, k_protocol: int) -> float:
+    """Mean of legacy raw ``1[c≥1]`` bits. Prefer :func:`mean_unbiased_pass_at_k`."""
     stats = per_problem_stats(pool, k_protocol)
     return sum(s.pass_bit for s in stats.values()) / len(stats)
+
+
+def per_problem_nc(pool: Pool) -> Dict[str, Dict[str, int]]:
+    """Per-problem ``{\"n\": n, \"c\": c}`` for metrics writers."""
+    out: Dict[str, Dict[str, int]] = {}
+    for pid, verified in pool.items():
+        out[pid] = {"n": len(verified), "c": _successes(verified)}
+    return out
 
 
 def avg_at_8(pool: Pool) -> float:

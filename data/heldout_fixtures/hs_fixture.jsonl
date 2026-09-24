@@ -1,0 +1,4 @@
+{"problem_id": "or1:1000", "or1_id": "or1:1000", "index": 1000, "pass_count": 0, "k": 16, "bin": "B0", "question": "Q B0 0", "ground_truth": "1"}
+{"problem_id": "or1:1010", "or1_id": "or1:1010", "index": 1010, "pass_count": 1, "k": 16, "bin": "B1", "question": "Q B1 0", "ground_truth": "1"}
+{"problem_id": "or1:1020", "or1_id": "or1:1020", "index": 1020, "pass_count": 1, "k": 16, "bin": "B2", "question": "Q B2 0", "ground_truth": "1"}
+{"problem_id": "or1:1030", "or1_id": "or1:1030", "index": 1030, "pass_count": 1, "k": 16, "bin": "B3", "question": "Q B3 0", "ground_truth": "1"}

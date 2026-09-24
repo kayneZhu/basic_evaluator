@@ -44,6 +44,10 @@ def is_aime26_problem_id(problem_id: str) -> bool:
     return problem_id.startswith("aime26:")
 
 
+def aime_year_prefix(year: int) -> str:
+    return f"aime{year}:"
+
+
 class C1MathAdaptor(C1PromptMixin, BaseAdaptor):
     """question / ground_truth jsonl + C.1 prompt + Math-Verify cascade."""
 
@@ -84,6 +88,37 @@ class C1AimeUnionAdaptor(C1MathAdaptor):
         return aime_union_problem_id(item)
 
 
+class C1AimeYearFilterAdaptor(C1AimeUnionAdaptor):
+    """Year row = filter of the 90-problem AIME union (not a redraw)."""
+
+    year: int = 24
+
+    def __init__(self, data_path: str, thinking_mode: bool = False, **kwargs):
+        year = int(kwargs.pop("year", self.year))
+        super().__init__(data_path, thinking_mode, **kwargs)
+        self.year = year
+        prefix = aime_year_prefix(self.year)
+        self.data = [
+            item for item in self.data
+            if aime_union_problem_id(item).startswith(prefix)
+        ]
+
+    def get_problem_id(self, item: Dict[str, Any]) -> str:
+        return aime_union_problem_id(item)
+
+
+class C1Aime24Adaptor(C1AimeYearFilterAdaptor):
+    year = 24
+
+
+class C1Aime25Adaptor(C1AimeYearFilterAdaptor):
+    year = 25
+
+
+class C1Aime26Adaptor(C1AimeYearFilterAdaptor):
+    year = 26
+
+
 class C1OR1200Adaptor(C1MathAdaptor):
     """OR1 / held-out H / Hs jsonl. Key name ``c1_or1_200`` is historical only."""
 
@@ -93,3 +128,38 @@ class C1OR1200Adaptor(C1MathAdaptor):
         if item.get("problem_id") and str(item["problem_id"]).startswith("or1:"):
             return str(item["problem_id"])
         return or1_problem_id(item)
+
+
+class C1HeldoutHHardAdaptor(C1OR1200Adaptor):
+    """H-hard = held-out H rows with bin B0."""
+
+    hard_bin: str = "B0"
+
+    def __init__(self, data_path: str, thinking_mode: bool = False, **kwargs):
+        hard_bin = str(kwargs.pop("hard_bin", self.hard_bin))
+        super().__init__(data_path, thinking_mode, **kwargs)
+        self.hard_bin = hard_bin
+        self.data = [
+            item for item in self.data
+            if str(item.get("bin", "")) == self.hard_bin
+        ]
+
+
+class C1Math500Adaptor(C1MathAdaptor):
+    def get_problem_id(self, item: Dict[str, Any]) -> str:
+        uid = item.get("unique_id")
+        if uid is None:
+            raise KeyError("math500 row missing unique_id")
+        return f"math500:{uid}"
+
+
+class C1Amc23Adaptor(C1MathAdaptor):
+    def get_problem_id(self, item: Dict[str, Any]) -> str:
+        return f"amc23:{int(item['unique_id'])}"
+
+
+class C1Hmmt25Adaptor(C1MathAdaptor):
+    def get_problem_id(self, item: Dict[str, Any]) -> str:
+        if item.get("problem_idx") is not None:
+            return f"hmmt25:{int(item['problem_idx'])}"
+        return f"hmmt25:{int(item['unique_id']) + 1}"

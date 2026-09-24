@@ -1,0 +1,12 @@
+{"problem_id": "or1:1000", "or1_id": "or1:1000", "index": 1000, "pass_count": 0, "k": 16, "bin": "B0", "question": "Q B0 0", "ground_truth": "1"}
+{"problem_id": "or1:1001", "or1_id": "or1:1001", "index": 1001, "pass_count": 0, "k": 16, "bin": "B0", "question": "Q B0 1", "ground_truth": "1"}
+{"problem_id": "or1:1002", "or1_id": "or1:1002", "index": 1002, "pass_count": 0, "k": 16, "bin": "B0", "question": "Q B0 2", "ground_truth": "1"}
+{"problem_id": "or1:1010", "or1_id": "or1:1010", "index": 1010, "pass_count": 1, "k": 16, "bin": "B1", "question": "Q B1 0", "ground_truth": "1"}
+{"problem_id": "or1:1011", "or1_id": "or1:1011", "index": 1011, "pass_count": 1, "k": 16, "bin": "B1", "question": "Q B1 1", "ground_truth": "1"}
+{"problem_id": "or1:1012", "or1_id": "or1:1012", "index": 1012, "pass_count": 1, "k": 16, "bin": "B1", "question": "Q B1 2", "ground_truth": "1"}
+{"problem_id": "or1:1020", "or1_id": "or1:1020", "index": 1020, "pass_count": 1, "k": 16, "bin": "B2", "question": "Q B2 0", "ground_truth": "1"}
+{"problem_id": "or1:1021", "or1_id": "or1:1021", "index": 1021, "pass_count": 1, "k": 16, "bin": "B2", "question": "Q B2 1", "ground_truth": "1"}
+{"problem_id": "or1:1022", "or1_id": "or1:1022", "index": 1022, "pass_count": 1, "k": 16, "bin": "B2", "question": "Q B2 2", "ground_truth": "1"}
+{"problem_id": "or1:1030", "or1_id": "or1:1030", "index": 1030, "pass_count": 1, "k": 16, "bin": "B3", "question": "Q B3 0", "ground_truth": "1"}
+{"problem_id": "or1:1031", "or1_id": "or1:1031", "index": 1031, "pass_count": 1, "k": 16, "bin": "B3", "question": "Q B3 1", "ground_truth": "1"}
+{"problem_id": "or1:1032", "or1_id": "or1:1032", "index": 1032, "pass_count": 1, "k": 16, "bin": "B3", "question": "Q B3 2", "ground_truth": "1"}

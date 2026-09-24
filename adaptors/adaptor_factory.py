@@ -14,7 +14,17 @@ from .verl_aligned_adaptor import VerlAlignedAdaptor
 from .verl_gpqa_diamond_adaptor import VerlGPQADiamondAdaptor
 from .verl_mmlu_pro_adaptor import VerlMMLUProAdaptor
 from .verl_scibench_adaptor import VerlSciBenchAdaptor
-from .c1_math_adaptor import C1AimeUnionAdaptor, C1OR1200Adaptor
+from .c1_math_adaptor import (
+    C1Aime24Adaptor,
+    C1Aime25Adaptor,
+    C1Aime26Adaptor,
+    C1AimeUnionAdaptor,
+    C1Amc23Adaptor,
+    C1HeldoutHHardAdaptor,
+    C1Hmmt25Adaptor,
+    C1Math500Adaptor,
+    C1OR1200Adaptor,
+)
 from .humaneval_plus_adaptor import HumanEvalPlusAdaptor
 
 
@@ -55,8 +65,16 @@ class AdaptorFactory:
             # This paper's C.1 mixin (do not alias onto VerlAlignedAdaptor).
             'c1_aime_union': C1AimeUnionAdaptor,
             'aime_union': C1AimeUnionAdaptor,
+            'c1_aime24': C1Aime24Adaptor,
+            'c1_aime25': C1Aime25Adaptor,
+            'c1_aime26': C1Aime26Adaptor,
             'c1_or1_200': C1OR1200Adaptor,
             'or1_200': C1OR1200Adaptor,
+            'c1_heldout_h_hard': C1HeldoutHHardAdaptor,
+            'c1_h_hard': C1HeldoutHHardAdaptor,
+            'c1_math500': C1Math500Adaptor,
+            'c1_amc23': C1Amc23Adaptor,
+            'c1_hmmt25': C1Hmmt25Adaptor,
             # Stub: raises NotImplementedError on construct. Not a fake scorer.
             'humaneval_plus': HumanEvalPlusAdaptor,
             'humaneval+': HumanEvalPlusAdaptor,

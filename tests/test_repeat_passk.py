@@ -31,15 +31,20 @@ _vllm_stubs = {
     },
 }
 for mod_name, attrs in _vllm_stubs.items():
-    if mod_name not in sys.modules:
-        m = types.ModuleType(mod_name)
-        for k, v in attrs.items():
-            setattr(m, k, v)
-        sys.modules[mod_name] = m
-    else:
-        for k, v in attrs.items():
-            if not hasattr(sys.modules[mod_name], k):
-                setattr(sys.modules[mod_name], k, v)
+    # Never replace a real install — a hollow torch stub poisons later tests
+    # that load transformers / train-side modules in the same pytest process.
+    if mod_name in sys.modules:
+        continue
+    try:
+        __import__(mod_name)
+        continue
+    except Exception:
+        pass
+    m = types.ModuleType(mod_name)
+    for k, v in attrs.items():
+        setattr(m, k, v)
+    sys.modules[mod_name] = m
+
 
 
 # ── Mock inference engine ────────────────────────────────────────────────────
