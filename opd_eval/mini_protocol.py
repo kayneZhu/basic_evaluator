@@ -8,7 +8,7 @@ Protocol (resume-safe on (problem_id, sample_idx)):
 CPU tests: pass ``generate_fn`` / ``batch_generate_fn``, or ``--dry-plan``.
 Live GPU: ``python -m opd_eval.mini_protocol --model-dir …`` launches
 data-parallel vLLM (TP=1, one engine per GPU, max_num_seqs=64) with
-per-request ``sample_seed`` and many requests per ``llm.generate`` call.
+per-request ``sample_seed`` and large ``llm.generate`` batches (~1024).
 """
 
 from __future__ import annotations
@@ -53,8 +53,36 @@ DEFAULT_H_HARD_MINI_PATH = DEFAULT_EVAL_MINI_DIR / "h_hard_mini.jsonl"
 DEFAULT_MATH500_MINI_PATH = DEFAULT_EVAL_MINI_DIR / "math500_mini.jsonl"
 
 DEFAULT_MAX_NUM_SEQS = 64
+# Large generate batches keep the engine fed while max_num_seqs caps concurrency.
+# Resume granularity = one generate call; append after each returns (kill-safe).
+DEFAULT_GENERATE_BATCH_SIZE = 1024
 DEFAULT_N_GPUS = 4
 DEFAULT_GPU_MEMORY_UTILIZATION = 0.90
+
+
+def sampling_params_kwargs(
+    seed: int,
+    *,
+    temperature: float = EVAL_TEMPERATURE,
+    top_p: float = EVAL_TOP_P,
+    max_tokens: int = STUDENT_MAX_NEW_TOKENS,
+    stop_token_ids: Optional[Sequence[int]] = None,
+) -> Dict[str, Any]:
+    """Frozen per-request SamplingParams fields (CPU-testable; no vLLM import)."""
+    stops = (
+        list(stop_token_ids)
+        if stop_token_ids is not None
+        else vllm_stop_token_ids()
+    )
+    return {
+        "temperature": float(temperature),
+        "top_p": float(top_p),
+        "max_tokens": int(max_tokens),
+        "n": 1,
+        "seed": int(seed),
+        "stop_token_ids": stops,
+        "include_stop_str_in_output": True,
+    }
 
 
 @dataclass(frozen=True)
@@ -184,15 +212,73 @@ def score_response(
     adaptor: BaseAdaptor,
     response: str,
     ground_truth: str,
+    *,
+    token_ids: Optional[Sequence[int]] = None,
+    finish_reason: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Score one completion.
+
+    ``n_tokens`` is the real completion token count when ``token_ids`` is
+    provided (vLLM ``completion.token_ids``). Legacy word-count lives in
+    ``n_words``. ``finish_reason`` is ``stop`` / ``length`` when known.
+    """
     extracted = adaptor.extract_answer(response)
     verified = bool(adaptor.verify_answer(extracted, ground_truth))
-    return {
+    n_words = len(response.split())
+    out: Dict[str, Any] = {
         "response": response,
         "extracted": extracted,
         "verified": verified,
-        "n_tokens": len(response.split()),
+        "n_words": n_words,
+        # CPU / mock path without token ids: fall back to word count so the
+        # required INTERFACE field stays present; GPU path always overrides.
+        "n_tokens": int(len(token_ids)) if token_ids is not None else n_words,
     }
+    if finish_reason is not None:
+        out["finish_reason"] = str(finish_reason)
+    return out
+
+
+def _completion_fields(completion: Any) -> Tuple[str, List[int], str]:
+    """Extract text, token_ids, finish_reason from a vLLM CompletionOutput."""
+    text = completion.text
+    token_ids = list(completion.token_ids or [])
+    reason = getattr(completion, "finish_reason", None) or "stop"
+    return text, token_ids, str(reason)
+
+
+def _write_worker_session_count(path: Path, n: int) -> None:
+    """Tiny side-file so progress can sum deltas without re-reading jsonl."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps({"session_written": int(n)}) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _read_session_written(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    try:
+        return int(json.loads(path.read_text(encoding="utf-8")).get("session_written", 0))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return 0
+
+
+def sum_session_written(bench_dir: Path) -> int:
+    total = 0
+    for p in bench_dir.glob("_gpu*_session.json"):
+        total += _read_session_written(p)
+    return total
+
+
+def progress_n_done(out_root: Path, *, baseline: int, bench_dir: Optional[Path] = None) -> int:
+    """Incremental done count: baseline (full recount once) + session deltas."""
+    extra = sum_session_written(bench_dir) if bench_dir is not None else 0
+    if bench_dir is None and out_root.is_dir():
+        for d in out_root.iterdir():
+            if d.is_dir():
+                extra += sum_session_written(d)
+    return int(baseline) + int(extra)
 
 
 def write_metrics(
@@ -379,6 +465,7 @@ def run_job(
     use_vllm: bool = False,
     n_gpus: int = DEFAULT_N_GPUS,
     max_num_seqs: int = DEFAULT_MAX_NUM_SEQS,
+    generate_batch_size: int = DEFAULT_GENERATE_BATCH_SIZE,
     max_new_tokens: int = STUDENT_MAX_NEW_TOKENS,
     max_model_len: int = MAX_MODEL_LEN,
     temperature: float = EVAL_TEMPERATURE,
@@ -426,10 +513,12 @@ def run_job(
 
     if use_vllm:
         if work:
+            # One full recount at job start; workers/poller then add session deltas.
+            progress_baseline = count_run_samples(out_root)
             write_progress(
                 out_root,
                 benchmark=job.benchmark_id,
-                n_done=count_run_samples(out_root),
+                n_done=progress_baseline,
                 n_total=progress_total,
                 started_at=started,
             )
@@ -442,6 +531,7 @@ def run_job(
                 model_dir=model_dir,
                 n_gpus=n_gpus,
                 max_num_seqs=max_num_seqs,
+                generate_batch_size=generate_batch_size,
                 max_new_tokens=max_new_tokens,
                 max_model_len=max_model_len,
                 temperature=temperature,
@@ -451,6 +541,7 @@ def run_job(
                 out_root=out_root,
                 progress_total=progress_total,
                 started_at=started,
+                progress_baseline=progress_baseline,
             )
             merge_shard_samples(bench_dir, samples_path)
     elif batch_generate_fn is not None:
@@ -587,6 +678,8 @@ def _run_vllm_dp(
     out_root: Optional[Path] = None,
     progress_total: int = 0,
     started_at: Optional[float] = None,
+    progress_baseline: int = 0,
+    generate_batch_size: int = DEFAULT_GENERATE_BATCH_SIZE,
 ) -> None:
     """Shard work across GPUs; one vLLM engine per GPU (TP=1), like rollout_passk."""
     bench_dir.mkdir(parents=True, exist_ok=True)
@@ -607,6 +700,12 @@ def _run_vllm_dp(
     python = sys.executable
     progress_root = out_root or bench_dir.parent
     t0 = float(started_at if started_at is not None else time.time())
+    # Clear stale session counters from a previous interrupted worker.
+    for stale in bench_dir.glob("_gpu*_session.json"):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
     for rank, bucket in enumerate(buckets):
         if not bucket:
             continue
@@ -628,6 +727,8 @@ def _run_vllm_dp(
             str(progress_root),
             "--max-num-seqs",
             str(max_num_seqs),
+            "--generate-batch-size",
+            str(int(generate_batch_size)),
             "--max-new-tokens",
             str(max_new_tokens),
             "--max-model-len",
@@ -648,13 +749,16 @@ def _run_vllm_dp(
             str(int(progress_total)),
             "--progress-started-at",
             str(t0),
+            "--progress-baseline",
+            str(int(progress_baseline)),
         ]
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(ids[rank])
         env["PYTHONUNBUFFERED"] = "1"
         print(
             f"mini_protocol gpu {rank} (physical {ids[rank]}): "
-            f"{len(bucket)} requests → {out_shard}",
+            f"{len(bucket)} requests → {out_shard} "
+            f"(generate_batch={generate_batch_size}, max_num_seqs={max_num_seqs})",
             flush=True,
         )
         procs.append(subprocess.Popen(cmd, env=env))
@@ -666,8 +770,10 @@ def _run_vllm_dp(
             write_progress(
                 progress_root,
                 benchmark=benchmark_id,
-                n_done=count_run_samples(progress_root),
-                n_total=int(progress_total) if progress_total else count_run_samples(progress_root),
+                n_done=progress_n_done(
+                    progress_root, baseline=progress_baseline, bench_dir=bench_dir
+                ),
+                n_total=int(progress_total) if progress_total else progress_baseline,
                 started_at=t0,
             )
 
@@ -680,8 +786,10 @@ def _run_vllm_dp(
     write_progress(
         progress_root,
         benchmark=benchmark_id,
-        n_done=count_run_samples(progress_root),
-        n_total=int(progress_total) if progress_total else count_run_samples(progress_root),
+        n_done=progress_n_done(
+            progress_root, baseline=progress_baseline, bench_dir=bench_dir
+        ),
+        n_total=int(progress_total) if progress_total else progress_baseline,
         started_at=t0,
     )
     if rc != 0:
@@ -699,8 +807,8 @@ def _vllm_generate_batch(
     temperature: float,
     top_p: float,
     gpu_memory_utilization: float,
-) -> List[str]:
-    """One ``llm.generate`` call with per-request SamplingParams.seed."""
+) -> List[Tuple[str, List[int], str]]:
+    """One ``llm.generate`` call → (text, token_ids, finish_reason) per request."""
     from vllm import LLM, SamplingParams
 
     if len(prompts) != len(seeds):
@@ -717,17 +825,8 @@ def _vllm_generate_batch(
         gpu_memory_utilization=float(gpu_memory_utilization),
         max_num_seqs=int(max_num_seqs),
     )
-    stops = vllm_stop_token_ids()
     params_list = [
-        SamplingParams(
-            temperature=float(temperature),
-            top_p=float(top_p),
-            max_tokens=int(max_new_tokens),
-            n=1,
-            seed=int(seed),
-            stop_token_ids=stops,
-            include_stop_str_in_output=True,
-        )
+        SamplingParams(**sampling_params_kwargs(int(seed), temperature=temperature, top_p=top_p, max_tokens=max_new_tokens))
         for seed in seeds
     ]
     outputs = llm.generate(list(prompts), params_list)
@@ -735,11 +834,11 @@ def _vllm_generate_batch(
         raise RuntimeError(
             f"vLLM returned {len(outputs)} outputs for {len(prompts)} requests"
         )
-    return [out.outputs[0].text for out in outputs]
+    return [_completion_fields(out.outputs[0]) for out in outputs]
 
 
 def worker_main(args: argparse.Namespace) -> int:
-    """Single-GPU worker: one engine, batched generate chunks, append shard jsonl."""
+    """Single-GPU worker: one engine, large generate batches, append shard jsonl."""
     work = json.loads(Path(args.work_list).read_text(encoding="utf-8"))
     if not work:
         return 0
@@ -773,21 +872,32 @@ def worker_main(args: argparse.Namespace) -> int:
         gpu_memory_utilization=float(args.gpu_memory_utilization),
         max_num_seqs=int(args.max_num_seqs),
     )
-    stops = vllm_stop_token_ids()
-    # Chunk so a kill mid-job loses at most one flush window, not the whole shard.
-    chunk = max(int(args.max_num_seqs), 64)
+    # Large batch per generate (engine concurrency still capped by max_num_seqs).
+    # Resume granularity = one generate call; append immediately after return.
+    chunk = max(int(getattr(args, "generate_batch_size", DEFAULT_GENERATE_BATCH_SIZE)), 1)
+    session_path = shard_out.with_name(
+        shard_out.name.replace("_samples.jsonl", "_session.json")
+        if shard_out.name.endswith("_samples.jsonl")
+        else shard_out.stem + "_session.json"
+    )
+    # If naming is unexpected, fall back next to shard.
+    if session_path == shard_out:
+        session_path = shard_out.parent / (shard_out.stem + "_session.json")
     n_written = 0
+    progress_total = int(getattr(args, "progress_total", 0) or 0)
+    started_at = float(getattr(args, "progress_started_at", 0) or 0)
+    progress_baseline = int(getattr(args, "progress_baseline", 0) or 0)
+    bench_dir = shard_out.parent
     for start in range(0, len(pending), chunk):
         batch_work = pending[start : start + chunk]
         params_list = [
             SamplingParams(
-                temperature=float(args.temperature),
-                top_p=float(args.top_p),
-                max_tokens=int(args.max_new_tokens),
-                n=1,
-                seed=int(w["seed"]),
-                stop_token_ids=stops,
-                include_stop_str_in_output=True,
+                **sampling_params_kwargs(
+                    int(w["seed"]),
+                    temperature=float(args.temperature),
+                    top_p=float(args.top_p),
+                    max_tokens=int(args.max_new_tokens),
+                )
             )
             for w in batch_work
         ]
@@ -798,15 +908,23 @@ def worker_main(args: argparse.Namespace) -> int:
             )
         rows: List[Dict[str, Any]] = []
         for w, out in zip(batch_work, outputs):
-            text = out.outputs[0].text
+            text, token_ids, finish_reason = _completion_fields(out.outputs[0])
             if adaptor is not None:
-                scored = score_response(adaptor, text, w["ground_truth"])
+                scored = score_response(
+                    adaptor,
+                    text,
+                    w["ground_truth"],
+                    token_ids=token_ids,
+                    finish_reason=finish_reason,
+                )
             else:
                 scored = {
                     "response": text,
                     "extracted": "",
                     "verified": False,
-                    "n_tokens": len(text.split()),
+                    "n_words": len(text.split()),
+                    "n_tokens": len(token_ids),
+                    "finish_reason": finish_reason,
                 }
             rows.append(
                 {
@@ -820,18 +938,21 @@ def worker_main(args: argparse.Namespace) -> int:
             )
         _append_jsonl(shard_out, rows)
         n_written += len(rows)
+        _write_worker_session_count(session_path, n_written)
         print(
             f"worker flush +{len(rows)} (total {n_written}/{len(pending)}) → {shard_out}",
             flush=True,
         )
-        # Refresh owner-visible progress every flush (≈ every max_num_seqs gens).
-        progress_total = int(getattr(args, "progress_total", 0) or 0)
-        started_at = float(getattr(args, "progress_started_at", 0) or 0)
+        # Incremental progress: baseline + sum of session deltas (no full recount).
         if progress_total > 0 and started_at > 0:
             write_progress(
                 Path(args.out_root),
                 benchmark=str(args.benchmark_id),
-                n_done=count_run_samples(Path(args.out_root)),
+                n_done=progress_n_done(
+                    Path(args.out_root),
+                    baseline=progress_baseline,
+                    bench_dir=bench_dir,
+                ),
                 n_total=progress_total,
                 started_at=started_at,
             )
@@ -881,6 +1002,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated physical GPU ids (overrides --n-gpus count)",
     )
     p.add_argument("--max-num-seqs", type=int, default=DEFAULT_MAX_NUM_SEQS)
+    p.add_argument(
+        "--generate-batch-size",
+        type=int,
+        default=DEFAULT_GENERATE_BATCH_SIZE,
+        help="Requests per llm.generate call (engine concurrency still max_num_seqs)",
+    )
     p.add_argument("--max-new-tokens", type=int, default=STUDENT_MAX_NEW_TOKENS)
     p.add_argument("--max-model-len", type=int, default=MAX_MODEL_LEN)
     p.add_argument("--temperature", type=float, default=EVAL_TEMPERATURE)
@@ -900,6 +1027,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--worker-data-path", type=str, default="")
     p.add_argument("--progress-total", type=int, default=0)
     p.add_argument("--progress-started-at", type=float, default=0.0)
+    p.add_argument("--progress-baseline", type=int, default=0)
     return p
 
 
@@ -978,6 +1106,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 use_vllm=True,
                 n_gpus=n_gpus,
                 max_num_seqs=int(args.max_num_seqs),
+                generate_batch_size=int(args.generate_batch_size),
                 max_new_tokens=int(args.max_new_tokens),
                 max_model_len=int(args.max_model_len),
                 temperature=float(args.temperature),

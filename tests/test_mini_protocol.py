@@ -353,5 +353,81 @@ class TestMiniProtocolResume(unittest.TestCase):
             self.assertTrue((root / "amc23" / "metrics.json").is_file())
 
 
+class TestSamplingParamsStable(unittest.TestCase):
+    """Per-sample SamplingParams must match the pre-batching contract."""
+
+    def test_kwargs_match_frozen_protocol_for_same_problem_idx(self):
+        from opd_eval.contract import vllm_stop_token_ids
+        from opd_eval.mini_protocol import sampling_params_kwargs
+        from opd_eval.length import STUDENT_MAX_NEW_TOKENS
+
+        stops = vllm_stop_token_ids()
+        # Frozen expected fields (identical to pre-fix SamplingParams construction).
+        expected_base = {
+            "temperature": 0.6,
+            "top_p": 0.95,
+            "max_tokens": STUDENT_MAX_NEW_TOKENS,
+            "n": 1,
+            "stop_token_ids": stops,
+            "include_stop_str_in_output": True,
+        }
+        cases = [
+            ("or1:1", 0),
+            ("or1:1", 1),
+            ("math500:x", 7),
+            ("aime24:0", 511),
+        ]
+        seen = {}
+        for pid, idx in cases:
+            seed = sample_seed(EVAL_SEED_MINI_PROTOCOL, pid, idx)
+            kw = sampling_params_kwargs(seed)
+            for k, v in expected_base.items():
+                self.assertEqual(kw[k], v, msg=f"{pid}/{idx} field {k}")
+            self.assertEqual(kw["seed"], seed)
+            # Idempotent: same (problem, idx) → identical kwargs.
+            again = sampling_params_kwargs(
+                sample_seed(EVAL_SEED_MINI_PROTOCOL, pid, idx)
+            )
+            self.assertEqual(kw, again)
+            seen[(pid, idx)] = kw
+        # Distinct (problem, idx) must differ only in seed (when seeds differ).
+        self.assertNotEqual(seen[("or1:1", 0)]["seed"], seen[("or1:1", 1)]["seed"])
+
+    def test_score_response_records_token_ids_and_finish_reason(self):
+        from opd_eval.mini_protocol import score_response
+
+        path = str(EVAL_ROOT / "data" / "amc23_bench_schema.jsonl")
+        adaptor = AdaptorFactory.create_adaptor("c1_amc23", path)
+        scored = score_response(
+            adaptor,
+            r"\boxed{27}",
+            "27",
+            token_ids=[1, 2, 3, 4, 5],
+            finish_reason="length",
+        )
+        self.assertEqual(scored["n_tokens"], 5)
+        self.assertEqual(scored["n_words"], len(r"\boxed{27}".split()))
+        self.assertEqual(scored["finish_reason"], "length")
+        self.assertNotEqual(scored["n_tokens"], scored["n_words"])
+
+    def test_progress_incremental_no_recount(self):
+        from opd_eval.mini_protocol import (
+            _write_worker_session_count,
+            progress_n_done,
+            sum_session_written,
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bench = root / "h_hard_mini"
+            bench.mkdir()
+            _write_worker_session_count(bench / "_gpu0_session.json", 10)
+            _write_worker_session_count(bench / "_gpu1_session.json", 7)
+            self.assertEqual(sum_session_written(bench), 17)
+            self.assertEqual(
+                progress_n_done(root, baseline=1000, bench_dir=bench), 1017
+            )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
