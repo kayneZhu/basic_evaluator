@@ -290,7 +290,7 @@ class TestMiniProtocolResume(unittest.TestCase):
                 base_seed=EVAL_SEED_MINI_PROTOCOL,
                 generate_fn=gen,
             )
-            self.assertEqual(info["n_todo"], 4)
+            self.assertEqual(info["n_todo"], 0)
             samples = root / "amc23" / "samples.jsonl"
             self.assertTrue(samples.is_file())
             # resume: second call should todo 0
@@ -304,6 +304,53 @@ class TestMiniProtocolResume(unittest.TestCase):
             self.assertEqual(info2["n_todo"], 0)
             self.assertTrue((root / "amc23" / "metrics.json").is_file())
             self.assertTrue((root / "amc23" / "per_problem_nc.jsonl").is_file())
+
+    def test_batch_generate_fn_mock(self):
+        """CPU mock of the batched vLLM path (many requests → one call)."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            data = root / "amc.jsonl"
+            rows = read_jsonl(EVAL_ROOT / "data" / "amc23_bench_schema.jsonl")[:3]
+            write_jsonl(data, rows)
+            job = MiniJob(
+                surface="amc23",
+                benchmark_id="amc23",
+                adaptor_key="c1_amc23",
+                data_path=data,
+                n=2,
+            )
+            calls = []
+
+            def batch_gen(work):
+                calls.append(len(work))
+                return [
+                    r"\boxed{27}" if int(w["seed"]) % 2 == 0 else r"\boxed{0}"
+                    for w in work
+                ]
+
+            info = run_job(
+                job,
+                out_root=root,
+                model_dir=root / "hf",
+                base_seed=EVAL_SEED_MINI_PROTOCOL,
+                batch_generate_fn=batch_gen,
+            )
+            self.assertEqual(calls, [6])  # 3 problems × 2 samples, one batch
+            self.assertEqual(info["n_todo"], 0)
+            self.assertEqual(info["temperature"], 0.6)
+            self.assertEqual(info["top_p"], 0.95)
+            self.assertEqual(info["max_new_tokens"], 10240)
+            # resume-safe: second run plans 0 and does not re-call batch
+            info2 = run_job(
+                job,
+                out_root=root,
+                model_dir=root / "hf",
+                base_seed=EVAL_SEED_MINI_PROTOCOL,
+                batch_generate_fn=batch_gen,
+            )
+            self.assertEqual(info2["n_todo"], 0)
+            self.assertEqual(calls, [6])
+            self.assertTrue((root / "amc23" / "metrics.json").is_file())
 
 
 if __name__ == "__main__":
