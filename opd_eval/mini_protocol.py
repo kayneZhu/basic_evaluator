@@ -188,12 +188,16 @@ def plan_work_items(
     base_seed: int,
     done: Set[Tuple[str, int]],
     bin_exclude: Optional[str] = None,
+    bin_include: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Resume-safe work list: skip completed (problem_id, sample_idx)."""
     refuse_binning_seed(base_seed, context="mini_protocol")
     items: List[Dict[str, Any]] = []
     for item in adaptor.data:
-        if bin_exclude is not None and str(item.get("bin", "")) == bin_exclude:
+        bin_name = str(item.get("bin", ""))
+        if bin_exclude is not None and bin_name == bin_exclude:
+            continue
+        if bin_include is not None and bin_name != bin_include:
             continue
         pid = adaptor.get_problem_id(item)
         prompt = adaptor.format_prompt(item)
@@ -674,6 +678,7 @@ def run_job(
         base_seed=base_seed,
         done=done,
         bin_exclude=job.bin_exclude,
+        bin_include=job.bin_filter,
     )
     plan_info = {
         "surface": job.surface,
