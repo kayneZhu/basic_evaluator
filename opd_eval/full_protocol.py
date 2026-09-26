@@ -28,6 +28,7 @@ H_K128_RUNS = frozenset({"C00", "C00p", "C00'", "v5_C01", "C01", "v5_C01g", "C01
 FIG4_N = 512
 PASS1_N = 16
 H_K = 128
+H_MINI_N = 512
 
 DEFAULT_H = Path("/root/autodl-tmp/data/processed/v5_20260927/h400.jsonl")
 DEFAULT_MATH500 = Path("data/math500_bench_schema.jsonl")
@@ -104,6 +105,17 @@ def build_full_jobs(
     return jobs
 
 
+def build_h_mini_n512_job(h_mini_path: Path) -> MiniJob:
+    """Ch.3 gate set: one file, n=512, every sample kept for pass@k k=1..512."""
+    return MiniJob(
+        surface="h_mini",
+        benchmark_id="h_mini",
+        adaptor_key="c1_or1_200",
+        data_path=Path(h_mini_path),
+        n=H_MINI_N,
+    )
+
+
 def plan_summary(jobs: Sequence[MiniJob], *, base_seed: int) -> dict:
     refuse_binning_seed(int(base_seed), context="full_protocol")
     if int(base_seed) in {0, 1}:
@@ -153,6 +165,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         action="store_true",
         help="Also draw H at K=128 (C00, C00', C01, C01g, C01f)",
     )
+    parser.add_argument(
+        "--only-h-mini-n512",
+        action="store_true",
+        help="Run only --h-mini at n=512. Samples stay in samples.jsonl "
+        "so pass@k for k=1..512 is unbiased.",
+    )
     args = parser.parse_args(argv)
     if args.worker:
         return worker_main(args)
@@ -162,16 +180,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     math500 = Path(args.math500_mini)
     if math500 == DEFAULT_MATH500_MINI_PATH:
         math500 = DEFAULT_MATH500
-    jobs = build_full_jobs(
-        h_path=h_path,
-        math500=math500,
-        aime_union=args.aime_union,
-        amc23=args.amc23,
-        hmmt25=args.hmmt25,
-        include_h_k128=bool(args.h_k128),
-    )
+    if args.only_h_mini_n512:
+        jobs = [build_h_mini_n512_job(Path(args.h_mini))]
+    else:
+        jobs = build_full_jobs(
+            h_path=h_path,
+            math500=math500,
+            aime_union=args.aime_union,
+            amc23=args.amc23,
+            hmmt25=args.hmmt25,
+            include_h_k128=bool(args.h_k128),
+        )
     # Point the H jobs at the v5 H file when the mini flag was left at its default.
     summary = plan_summary(jobs, base_seed=int(args.base_seed))
+    if args.only_h_mini_n512:
+        summary["mode"] = "h_mini_n512"
+        summary["samples_kept"] = "samples.jsonl"
+        summary["pass_at_k"] = "1..512"
     if args.dry_plan:
         print(json.dumps(summary, indent=2))
         return 0

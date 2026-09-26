@@ -29,6 +29,23 @@ def test_fig4_surfaces_are_n512_and_not_resampled_at_16() -> None:
     assert "h_k128" not in by_surface
 
 
+def test_h_mini_n512_is_opt_in_and_keeps_every_sample() -> None:
+    from pathlib import Path
+
+    from opd_eval.full_protocol import H_MINI_N, build_h_mini_n512_job
+
+    assert "h_mini" not in {j.surface for j in build_full_jobs()}
+    job = build_h_mini_n512_job(Path("/tmp/h_mini200.jsonl"))
+    assert job.surface == "h_mini"
+    assert job.benchmark_id == "h_mini"
+    assert job.n == H_MINI_N == 512
+    assert job.bin_filter is None
+    assert job.bin_exclude is None
+    summary = plan_summary([job], base_seed=FULL_PROTOCOL_SEED)
+    assert summary["jobs"][0]["n"] == 512
+    assert summary["fig4_n512"] == ["h_mini"]
+
+
 def test_h_k128_is_opt_in() -> None:
     jobs = build_full_jobs(include_h_k128=True)
     k128 = [j for j in jobs if j.surface == "h_k128"]
