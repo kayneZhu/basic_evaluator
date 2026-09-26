@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -23,6 +24,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+
+# After workers exit (or are killed), wait for VRAM to drain before the next job.
+DEFAULT_GPU_IDLE_MEM_MIB = 1000
+DEFAULT_GPU_IDLE_TIMEOUT_S = 600
+DEFAULT_GPU_IDLE_POLL_S = 10
 
 from adaptors.adaptor_factory import AdaptorFactory
 from adaptors.base_adaptor import BaseAdaptor
@@ -373,10 +379,21 @@ def _score_and_append(
     return n_written
 
 
-def merge_shard_samples(bench_dir: Path, samples_path: Path) -> int:
-    """Merge ``_gpu*_samples.jsonl`` into ``samples.jsonl`` (resume-safe)."""
+def merge_shard_samples(
+    bench_dir: Path,
+    samples_path: Path,
+    *,
+    retire_shards: bool = False,
+) -> int:
+    """Merge ``_gpu*_samples.jsonl`` into ``samples.jsonl`` (resume-safe).
+
+    When ``retire_shards`` is true (post-success merge), truncate each merged
+    shard and rotate a ``.merged`` copy so orphaned writers cannot append
+    duplicates into the live shard path.
+    """
     done = _load_done_keys(samples_path)
     added = 0
+    merged_shards: List[Path] = []
     for shard in sorted(bench_dir.glob("_gpu*_samples.jsonl")):
         batch: List[Dict[str, Any]] = []
         with open(shard, "r", encoding="utf-8") as f:
@@ -393,7 +410,174 @@ def merge_shard_samples(bench_dir: Path, samples_path: Path) -> int:
                 added += 1
         if batch:
             _append_jsonl(samples_path, batch)
+        merged_shards.append(shard)
+    if retire_shards:
+        for shard in merged_shards:
+            _retire_merged_shard(shard)
     return added
+
+
+def _retire_merged_shard(shard: Path) -> None:
+    """Rotate shard aside and truncate the live path (orphan-writer safe)."""
+    if not shard.is_file():
+        return
+    rotated = shard.with_suffix(shard.suffix + ".merged")
+    try:
+        if rotated.exists():
+            # Keep prior content by appending, then replace live with empty.
+            with open(rotated, "ab") as out, open(shard, "rb") as inp:
+                out.write(inp.read())
+            shard.write_text("", encoding="utf-8")
+        else:
+            os.replace(shard, rotated)
+            shard.write_text("", encoding="utf-8")
+    except OSError:
+        # Best-effort: at least truncate so orphans rewrite from empty.
+        try:
+            shard.write_text("", encoding="utf-8")
+        except OSError:
+            pass
+
+
+def gpu_memory_used_mib(
+    *,
+    nvidia_smi: str = "nvidia-smi",
+) -> List[int]:
+    """Return per-GPU memory.used MiB (empty list if query fails)."""
+    try:
+        out = subprocess.check_output(
+            [
+                nvidia_smi,
+                "--query-gpu=memory.used",
+                "--format=csv,noheader,nounits",
+            ],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    vals: List[int] = []
+    for line in out.splitlines():
+        line = line.strip().replace(" ", "")
+        if not line:
+            continue
+        try:
+            vals.append(int(float(line)))
+        except ValueError:
+            continue
+    return vals
+
+
+def gpu_compute_app_pids(
+    *,
+    nvidia_smi: str = "nvidia-smi",
+) -> List[int]:
+    """Return PIDs of compute apps reported by nvidia-smi."""
+    try:
+        out = subprocess.check_output(
+            [
+                nvidia_smi,
+                "--query-compute-apps=pid",
+                "--format=csv,noheader",
+            ],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    pids: List[int] = []
+    for line in out.splitlines():
+        line = line.strip().replace(" ", "")
+        if not line:
+            continue
+        try:
+            pid = int(line)
+        except ValueError:
+            continue
+        if pid > 0:
+            pids.append(pid)
+    return pids
+
+
+def gpus_are_idle(
+    *,
+    mem_mib_limit: int = DEFAULT_GPU_IDLE_MEM_MIB,
+    nvidia_smi: str = "nvidia-smi",
+) -> bool:
+    """True when every GPU is under ``mem_mib_limit`` and has no compute apps."""
+    mems = gpu_memory_used_mib(nvidia_smi=nvidia_smi)
+    if any(m >= mem_mib_limit for m in mems):
+        return False
+    if gpu_compute_app_pids(nvidia_smi=nvidia_smi):
+        return False
+    return True
+
+
+def wait_for_gpus_idle(
+    *,
+    mem_mib_limit: int = DEFAULT_GPU_IDLE_MEM_MIB,
+    timeout_s: float = DEFAULT_GPU_IDLE_TIMEOUT_S,
+    poll_s: float = DEFAULT_GPU_IDLE_POLL_S,
+    nvidia_smi: str = "nvidia-smi",
+    sleep_fn: Callable[[float], None] = time.sleep,
+) -> bool:
+    """Poll until GPUs idle or timeout. Returns True if idle."""
+    waited = 0.0
+    while waited <= float(timeout_s):
+        if gpus_are_idle(mem_mib_limit=mem_mib_limit, nvidia_smi=nvidia_smi):
+            print(
+                f"mini_protocol: GPUs idle after {int(waited)}s "
+                f"mem_mib={gpu_memory_used_mib(nvidia_smi=nvidia_smi)}",
+                flush=True,
+            )
+            return True
+        sleep_fn(float(poll_s))
+        waited += float(poll_s)
+    print(
+        f"mini_protocol: GPUs still busy after {int(timeout_s)}s "
+        f"mem_mib={gpu_memory_used_mib(nvidia_smi=nvidia_smi)} "
+        f"compute_pids={gpu_compute_app_pids(nvidia_smi=nvidia_smi)}",
+        flush=True,
+    )
+    return False
+
+
+def _kill_process_group(proc: subprocess.Popen, *, sig: int = signal.SIGTERM) -> None:
+    """Signal the worker's process group (started with start_new_session)."""
+    if proc.pid is None:
+        return
+    try:
+        os.killpg(proc.pid, sig)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        try:
+            proc.send_signal(sig)
+        except ProcessLookupError:
+            return
+
+
+def terminate_worker_processes(
+    procs: Sequence[subprocess.Popen],
+    *,
+    grace_s: float = 5.0,
+    sleep_fn: Callable[[float], None] = time.sleep,
+) -> None:
+    """SIGTERM then SIGKILL each worker process group; wait for exit."""
+    live = [p for p in procs if p.poll() is None]
+    for p in live:
+        _kill_process_group(p, sig=signal.SIGTERM)
+    if live:
+        sleep_fn(float(grace_s))
+    for p in procs:
+        if p.poll() is None:
+            _kill_process_group(p, sig=signal.SIGKILL)
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def _count_lines(path: Path) -> int:
@@ -543,7 +727,7 @@ def run_job(
                 started_at=started,
                 progress_baseline=progress_baseline,
             )
-            merge_shard_samples(bench_dir, samples_path)
+            merge_shard_samples(bench_dir, samples_path, retire_shards=True)
     elif batch_generate_fn is not None:
         if work:
             texts = batch_generate_fn(work)
@@ -761,7 +945,8 @@ def _run_vllm_dp(
             f"(generate_batch={generate_batch_size}, max_num_seqs={max_num_seqs})",
             flush=True,
         )
-        procs.append(subprocess.Popen(cmd, env=env))
+        # Own session (= process group) so we can killpg vLLM EngineCore children.
+        procs.append(subprocess.Popen(cmd, env=env, start_new_session=True))
 
     stop = threading.Event()
 
@@ -780,19 +965,56 @@ def _run_vllm_dp(
     poller = threading.Thread(target=_poll_progress, daemon=True)
     poller.start()
     rc = 0
-    for proc in procs:
-        rc = max(rc, int(proc.wait()))
-    stop.set()
-    write_progress(
-        progress_root,
-        benchmark=benchmark_id,
-        n_done=progress_n_done(
-            progress_root, baseline=progress_baseline, bench_dir=bench_dir
-        ),
-        n_total=int(progress_total) if progress_total else progress_baseline,
-        started_at=t0,
-    )
-    if rc != 0:
+    failed = False
+    try:
+        # Poll so a single worker failure can kill siblings promptly.
+        pending = list(procs)
+        while pending:
+            still: List[subprocess.Popen] = []
+            for proc in pending:
+                code = proc.poll()
+                if code is None:
+                    still.append(proc)
+                    continue
+                rc = max(rc, int(code))
+                if int(code) != 0:
+                    failed = True
+            if failed:
+                print(
+                    "mini_protocol: worker failure — terminating sibling process groups",
+                    flush=True,
+                )
+                terminate_worker_processes(procs)
+                for proc in procs:
+                    if proc.returncode is not None:
+                        rc = max(rc, int(proc.returncode))
+                break
+            pending = still
+            if pending:
+                time.sleep(0.5)
+    finally:
+        stop.set()
+        # Ensure no orphaned EngineCore processes hold VRAM into the next phase.
+        if any(p.poll() is None for p in procs):
+            terminate_worker_processes(procs)
+        write_progress(
+            progress_root,
+            benchmark=benchmark_id,
+            n_done=progress_n_done(
+                progress_root, baseline=progress_baseline, bench_dir=bench_dir
+            ),
+            n_total=int(progress_total) if progress_total else progress_baseline,
+            started_at=t0,
+        )
+        # Phase switch gate: next job must not start until VRAM is free.
+        idle_ok = wait_for_gpus_idle()
+        if not idle_ok:
+            print(
+                "mini_protocol: WARNING GPUs not idle after worker teardown "
+                f"(rc={rc})",
+                flush=True,
+            )
+    if rc != 0 or failed:
         raise RuntimeError(f"mini_protocol vLLM worker(s) failed rc={rc}")
 
 
