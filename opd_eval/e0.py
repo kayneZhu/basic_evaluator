@@ -90,12 +90,17 @@ def load_bin_map(h_mini_path: Path) -> dict[str, str]:
 
 
 def load_problem_texts(h_mini_path: Path) -> dict[str, str]:
-    """Seat-manifest ``problem_text``, keyed by problem id. No sample fallback."""
+    """Problem string from the H-mini / seat manifest, keyed by problem id.
+
+    Held-out H stores that string in ``question`` (``sample_heldout_h``
+    copies ``problem.problem_text``). Seated rows store it in
+    ``problem_text``. Never read it from ``samples.jsonl``.
+    """
     out: dict[str, str] = {}
     for row in _read_jsonl(h_mini_path):
         pid = _problem_id(row)
         if pid:
-            out[pid] = str(row.get("problem_text") or "")
+            out[pid] = str(row.get("problem_text") or row.get("question") or "")
     return out
 
 

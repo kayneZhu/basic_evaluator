@@ -110,23 +110,26 @@ def test_continuation_prompt_uses_manifest_problem_text(tmp_path) -> None:
     from adaptors.c1_math_adaptor import C1OR1200Adaptor
 
     problem_text = "Seated integral of x squared"
+    # H-mini rows store the problem in question (sample_heldout_h).
+    h_row = {
+        "problem_id": "or1:7",
+        "or1_id": "or1:7",
+        "bin": "B0",
+        "ground_truth": "1",
+        "question": problem_text,
+    }
     manifest = tmp_path / "h_mini.jsonl"
-    manifest.write_text(
-        json.dumps(
-            {
-                "or1_id": "or1:7",
-                "bin": "B0",
-                "ground_truth": "1",
-                "question": "WRONG_QUESTION_FIELD",
-                "problem_text": problem_text,
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    manifest.write_text(json.dumps(h_row) + "\n", encoding="utf-8")
     texts = load_problem_texts(manifest)
     assert texts == {"or1:7": problem_text}
     assert problem_text_for("or1:7", texts) == problem_text
+
+    seated = tmp_path / "seated.jsonl"
+    seated.write_text(
+        json.dumps({"or1_id": "or1:9", "problem_text": "seated only", "bin": "B0"}) + "\n",
+        encoding="utf-8",
+    )
+    assert load_problem_texts(seated) == {"or1:9": "seated only"}
 
     sample = {
         "problem_id": "or1:7",
@@ -158,18 +161,8 @@ def test_continuation_prompt_uses_manifest_problem_text(tmp_path) -> None:
     decoded = "".join(chr(i) for i in captured["prompt"])
     assert problem_text in decoded
     assert "FROM_SAMPLES" not in decoded
-    assert "WRONG_QUESTION_FIELD" not in decoded
 
-    base_item = {
-        "or1_id": "or1:7",
-        "question": problem_text,
-        "problem_text": problem_text,
-        "ground_truth": "1",
-        "bin": "B0",
-    }
-    base_path = tmp_path / "base.jsonl"
-    base_path.write_text(json.dumps(base_item) + "\n", encoding="utf-8")
-    adaptor = C1OR1200Adaptor(str(base_path))
+    adaptor = C1OR1200Adaptor(str(manifest))
     base_prompt = adaptor.format_prompt(adaptor.data[0])
     prefix = response_token_ids(sample, tok)[: state_positions(4, 1)[0]]
     assert captured["prompt"] == [ord(ch) for ch in base_prompt] + prefix
