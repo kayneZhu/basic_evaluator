@@ -6,9 +6,14 @@ import json
 
 from opd_eval.e0 import (
     DRY_RUN_MAX_SECONDS,
+    _CharTokenizer,
+    _default_verify,
+    continuation_prompt_ids,
     dry_run_limits,
     estimate_seconds,
+    eval_chat_template_ids,
     full_job_estimate,
+    response_token_ids,
     run_e0,
     state_positions,
 )
@@ -26,10 +31,10 @@ def test_state_positions_are_inside_the_rollout() -> None:
 
 def test_continuations_are_verified_per_bin() -> None:
     samples = [
-        {"problem_id": "a", "sample_idx": 0, "verified": False, "token_ids": list(range(20)), "ground_truth": "1"},
-        {"problem_id": "a", "sample_idx": 1, "verified": True, "token_ids": list(range(20)), "ground_truth": "1"},
-        {"problem_id": "b", "sample_idx": 0, "verified": False, "token_ids": list(range(20)), "ground_truth": "1"},
-        {"problem_id": "c", "sample_idx": 0, "verified": False, "token_ids": list(range(20)), "ground_truth": "1"},
+        {"problem_id": "a", "sample_idx": 0, "verified": False, "response": "x" * 20, "question": "qa", "ground_truth": "1"},
+        {"problem_id": "a", "sample_idx": 1, "verified": True, "response": "x" * 20, "question": "qa", "ground_truth": "1"},
+        {"problem_id": "b", "sample_idx": 0, "verified": False, "response": "y" * 20, "question": "qb", "ground_truth": "1"},
+        {"problem_id": "c", "sample_idx": 0, "verified": False, "response": "z" * 20, "question": "qc", "ground_truth": "1"},
     ]
     bins = {"a": "B0", "b": "B1", "c": "B3"}
 
@@ -49,6 +54,7 @@ def test_continuations_are_verified_per_bin() -> None:
         verify_fn=verify,
         n_states=1,
         n_rollouts=1,
+        tokenizer=_CharTokenizer(),
     )
     assert "B3" not in report["bins"]
     assert report["bins"]["B0"]["mean_success"] == 1.0
@@ -78,3 +84,19 @@ def test_cli_dry_run(tmp_path, capsys) -> None:
     assert payload["estimated_seconds"] <= DRY_RUN_MAX_SECONDS
     assert payload["full_job"]["n_generations"] == 2 * 1 * 8 * 4
     assert capsys.readouterr().out == ""
+
+
+def test_response_retokenize_round_trip() -> None:
+    tok = _CharTokenizer()
+    text = "abcde"
+    ids = response_token_ids({"response": text, "n_tokens": 99}, tok)
+    assert ids == [ord(ch) for ch in text]
+    assert "".join(chr(i) for i in ids) == text
+    assert ids != list(range(99))
+    prefix = ids[:2]
+    chat = eval_chat_template_ids("What is 1+1?", tok)
+    prompt = continuation_prompt_ids("What is 1+1?", prefix, tok)
+    assert prompt == chat + prefix
+    assert prompt[: len(chat)] == chat
+    assert _default_verify("the answer is 1", "1") is False
+    assert _default_verify("\\boxed{1}", "1") is True

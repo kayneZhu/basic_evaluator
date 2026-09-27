@@ -119,12 +119,34 @@ def select_failed_rollouts(
     return chosen
 
 
-def _token_ids(row: Mapping[str, Any]) -> list[int]:
-    ids = row.get("token_ids")
-    if ids:
-        return [int(x) for x in ids]
-    n = int(row.get("n_tokens") or 0)
-    return list(range(n))
+def response_token_ids(row: Mapping[str, Any], tokenizer: Any) -> list[int]:
+    """Student-tokenizer ids of the rollout text. No invented ``range(n)``."""
+    if tokenizer is None:
+        raise ValueError("E0 needs the student tokenizer to retokenize response")
+    text = row.get("response")
+    if text is None:
+        raise ValueError("E0 sample is missing response text")
+    encode = getattr(tokenizer, "encode", None)
+    if not callable(encode):
+        raise TypeError("student tokenizer must implement encode")
+    return [int(x) for x in encode(str(text), add_special_tokens=False)]
+
+
+def eval_chat_template_ids(question: str, tokenizer: Any) -> list[int]:
+    """Eval C.1 chat-template ids (g=0, including the format ``<think>``)."""
+    from adaptors.c1_prompt_mixin import render_c1_prompt
+
+    text = render_c1_prompt(str(question), tokenizer)
+    return [int(x) for x in tokenizer.encode(text, add_special_tokens=False)]
+
+
+def continuation_prompt_ids(
+    question: str,
+    prefix_token_ids: Sequence[int],
+    tokenizer: Any,
+) -> list[int]:
+    """Eval chat-template ids followed by the failed-rollout prefix."""
+    return eval_chat_template_ids(question, tokenizer) + [int(x) for x in prefix_token_ids]
 
 
 def run_e0(
@@ -139,6 +161,7 @@ def run_e0(
     problem_limit: int | None = None,
     samples_per_sec: float = SAMPLES_PER_SEC,
     answers: Mapping[str, str] | None = None,
+    tokenizer: Any = None,
 ) -> dict[str, Any]:
     """Score continuations. ``generate_fn(state)`` returns ``n`` new suffixes."""
     rollouts = select_failed_rollouts(
@@ -148,20 +171,23 @@ def run_e0(
     n_gen = 0
     details: list[dict[str, Any]] = []
     for row in rollouts:
-        ids = _token_ids(row)
+        ids = response_token_ids(row, tokenizer)
         positions = state_positions(len(ids), n_states)
         gt = ""
         if answers is not None:
             gt = str(answers.get(_problem_id(row), ""))
         gt = gt or str(row.get("ground_truth") or row.get("answer") or "")
+        question = str(row.get("question") or row.get("problem") or "")
         for pos in positions:
+            prefix = ids[:pos]
             state = {
                 "problem_id": _problem_id(row),
                 "bin": row["bin"],
                 "sample_idx": int(row.get("sample_idx") or 0),
                 "position": int(pos),
-                "prefix_token_ids": ids[:pos],
-                "question": str(row.get("question") or row.get("problem") or ""),
+                "prefix_token_ids": prefix,
+                "prompt_token_ids": continuation_prompt_ids(question, prefix, tokenizer),
+                "question": question,
                 "ground_truth": gt,
                 "n": int(n_continuations),
                 "temperature": TEMPERATURE,
@@ -235,9 +261,8 @@ def _stub_generate(state: Mapping[str, Any]) -> list[str]:
 def vllm_generate_fn(model: Path, *, temperature: float = TEMPERATURE, top_p: float = TOP_P):
     """Student continuations at T=0.6 / top_p=0.95. One engine, ``n`` samples per state.
 
-    The prompt is the failed-rollout prefix token ids already on the state.
-    Callers that have the question tokens should prepend them to
-    ``prefix_token_ids`` before calling :func:`run_e0`.
+    The prompt is ``state["prompt_token_ids"]``: eval chat-template ids
+    plus the retokenized failed-rollout prefix.
     """
     from vllm import LLM, SamplingParams
 
@@ -251,10 +276,7 @@ def vllm_generate_fn(model: Path, *, temperature: float = TEMPERATURE, top_p: fl
     tokenizer = llm.get_tokenizer()
 
     def _gen(state: Mapping[str, Any]) -> list[str]:
-        prompt_ids = list(state["prefix_token_ids"])
-        question = str(state.get("question") or "")
-        if question:
-            prompt_ids = list(tokenizer.encode(question)) + prompt_ids
+        prompt_ids = list(state["prompt_token_ids"])
         params = SamplingParams(
             temperature=float(temperature),
             top_p=float(top_p),
@@ -272,15 +294,36 @@ def vllm_generate_fn(model: Path, *, temperature: float = TEMPERATURE, top_p: fl
             texts.append(tokenizer.decode(sample.token_ids, skip_special_tokens=True))
         return texts
 
+    _gen.tokenizer = tokenizer  # type: ignore[attr-defined]
     return _gen
 
 
 def _default_verify(text: str, ground_truth: str) -> bool:
-    try:
-        from opd_frontier.verify import verify_suffix
-    except ImportError:
-        return ground_truth != "" and ground_truth in text
-    return bool(verify_suffix(text, ground_truth))
+    from adaptors.verl_aligned_adaptor import _extract_boxed, _verify_math
+
+    return bool(_verify_math(_extract_boxed(text), ground_truth))
+
+
+class _CharTokenizer:
+    """Dry-run stand-in. ``--model`` uses the student tokenizer instead."""
+
+    def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+        if add_special_tokens:
+            raise ValueError("E0 retokenizes with add_special_tokens=False")
+        return [ord(ch) for ch in str(text)]
+
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True, **kwargs):
+        if tokenize:
+            raise ValueError("render the string, then encode")
+        if "enable_thinking" in kwargs:
+            raise ValueError("C.1 must not pass enable_thinking")
+        parts = [
+            f"<|im_start|>{message['role']}\n{message['content']}<|im_end|>\n"
+            for message in messages
+        ]
+        if add_generation_prompt:
+            parts.append("<|im_start|>assistant\n")
+        return "".join(parts)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -315,9 +358,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.dry_run:
             raise SystemExit("E0 needs --samples and --h-mini (or --dry-run)")
         samples = [
-            {"problem_id": "p0", "sample_idx": 0, "verified": False, "n_tokens": 20, "ground_truth": "1"},
-            {"problem_id": "p1", "sample_idx": 0, "verified": False, "n_tokens": 20, "ground_truth": "1"},
-            {"problem_id": "p2", "sample_idx": 0, "verified": True, "n_tokens": 20, "ground_truth": "1"},
+            {
+                "problem_id": "p0",
+                "sample_idx": 0,
+                "verified": False,
+                "response": "x" * 20,
+                "question": "q0",
+                "ground_truth": "1",
+            },
+            {
+                "problem_id": "p1",
+                "sample_idx": 0,
+                "verified": False,
+                "response": "y" * 20,
+                "question": "q1",
+                "ground_truth": "1",
+            },
+            {
+                "problem_id": "p2",
+                "sample_idx": 0,
+                "verified": True,
+                "response": "z" * 20,
+                "question": "q2",
+                "ground_truth": "1",
+            },
         ]
         bins = {"p0": "B0", "p1": "B1", "p2": "B3"}
         answers = {"p0": "1", "p1": "1", "p2": "1"}
@@ -327,10 +391,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         for r in samples
         if not r.get("verified") and bins.get(_problem_id(r)) in LOW_BINS
     })
+    tokenizer: Any
     if args.dry_run:
         generate_fn: GenerateFn = _stub_generate
+        tokenizer = _CharTokenizer()
     elif args.model:
         generate_fn = vllm_generate_fn(args.model)
+        tokenizer = generate_fn.tokenizer  # type: ignore[attr-defined]
     else:
         raise SystemExit("pass --dry-run or --model (student HF dir, T=0.6/top_p=0.95)")
     report = run_e0(
@@ -343,6 +410,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         problem_limit=problem_limit,
         samples_per_sec=float(args.samples_per_sec),
         answers=answers,
+        tokenizer=tokenizer,
     )
     report["dry_run"] = bool(args.dry_run)
     report["full_job"] = full_job_estimate(
