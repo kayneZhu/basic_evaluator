@@ -89,6 +89,25 @@ def load_bin_map(h_mini_path: Path) -> dict[str, str]:
     return out
 
 
+def load_problem_texts(h_mini_path: Path) -> dict[str, str]:
+    """Seat-manifest ``problem_text``, keyed by problem id. No sample fallback."""
+    out: dict[str, str] = {}
+    for row in _read_jsonl(h_mini_path):
+        pid = _problem_id(row)
+        if pid:
+            out[pid] = str(row.get("problem_text") or "")
+    return out
+
+
+def problem_text_for(problem_id: str, problems: Mapping[str, str] | None) -> str:
+    text = "" if problems is None else str(problems.get(problem_id) or "")
+    if not text.strip():
+        raise ValueError(
+            f"E0 missing problem_text for {problem_id} on the H-mini / seat manifest"
+        )
+    return text
+
+
 def select_failed_rollouts(
     samples: Sequence[Mapping[str, Any]],
     bins: Mapping[str, str],
@@ -162,6 +181,7 @@ def run_e0(
     samples_per_sec: float = SAMPLES_PER_SEC,
     answers: Mapping[str, str] | None = None,
     tokenizer: Any = None,
+    problems: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Score continuations. ``generate_fn(state)`` returns ``n`` new suffixes."""
     rollouts = select_failed_rollouts(
@@ -177,7 +197,7 @@ def run_e0(
         if answers is not None:
             gt = str(answers.get(_problem_id(row), ""))
         gt = gt or str(row.get("ground_truth") or row.get("answer") or "")
-        question = str(row.get("question") or row.get("problem") or "")
+        question = problem_text_for(_problem_id(row), problems)
         for pos in positions:
             prefix = ids[:pos]
             state = {
@@ -329,7 +349,11 @@ class _CharTokenizer:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--samples", type=Path, help="Base H-mini samples.jsonl")
-    parser.add_argument("--h-mini", type=Path, help="h_mini200.jsonl (problem_id, bin, answer)")
+    parser.add_argument(
+        "--h-mini",
+        type=Path,
+        help="h_mini200.jsonl (problem_id, bin, answer, problem_text)",
+    )
     parser.add_argument("--n-states", type=int, default=4)
     parser.add_argument("--n-rollouts", type=int, default=1)
     parser.add_argument("--samples-per-sec", type=float, default=SAMPLES_PER_SEC)
@@ -350,6 +374,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.samples and args.h_mini:
         samples = _read_jsonl(args.samples)
         bins = load_bin_map(args.h_mini)
+        problems = load_problem_texts(args.h_mini)
         answers = {}
         for row in _read_jsonl(args.h_mini):
             pid = _problem_id(row)
@@ -385,6 +410,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         ]
         bins = {"p0": "B0", "p1": "B1", "p2": "B3"}
         answers = {"p0": "1", "p1": "1", "p2": "1"}
+        problems = {
+            "p0": "seated problem zero",
+            "p1": "seated problem one",
+            "p2": "seated problem two",
+        }
 
     n_problems_full = len({
         _problem_id(r)
@@ -411,6 +441,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         samples_per_sec=float(args.samples_per_sec),
         answers=answers,
         tokenizer=tokenizer,
+        problems=problems,
     )
     report["dry_run"] = bool(args.dry_run)
     report["full_job"] = full_job_estimate(

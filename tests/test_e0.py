@@ -13,6 +13,8 @@ from opd_eval.e0 import (
     estimate_seconds,
     eval_chat_template_ids,
     full_job_estimate,
+    load_problem_texts,
+    problem_text_for,
     response_token_ids,
     run_e0,
     state_positions,
@@ -55,6 +57,7 @@ def test_continuations_are_verified_per_bin() -> None:
         n_states=1,
         n_rollouts=1,
         tokenizer=_CharTokenizer(),
+        problems={"a": "qa seated", "b": "qb seated"},
     )
     assert "B3" not in report["bins"]
     assert report["bins"]["B0"]["mean_success"] == 1.0
@@ -100,3 +103,86 @@ def test_response_retokenize_round_trip() -> None:
     assert prompt[: len(chat)] == chat
     assert _default_verify("the answer is 1", "1") is False
     assert _default_verify("\\boxed{1}", "1") is True
+
+
+def test_continuation_prompt_uses_manifest_problem_text(tmp_path) -> None:
+    import pytest
+    from adaptors.c1_math_adaptor import C1OR1200Adaptor
+
+    problem_text = "Seated integral of x squared"
+    manifest = tmp_path / "h_mini.jsonl"
+    manifest.write_text(
+        json.dumps(
+            {
+                "or1_id": "or1:7",
+                "bin": "B0",
+                "ground_truth": "1",
+                "question": "WRONG_QUESTION_FIELD",
+                "problem_text": problem_text,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    texts = load_problem_texts(manifest)
+    assert texts == {"or1:7": problem_text}
+    assert problem_text_for("or1:7", texts) == problem_text
+
+    sample = {
+        "problem_id": "or1:7",
+        "sample_idx": 0,
+        "verified": False,
+        "response": "abcd",
+        "question": "FROM_SAMPLES",
+        "problem": "ALSO_FROM_SAMPLES",
+        "ground_truth": "1",
+    }
+    tok = _CharTokenizer()
+    captured: dict = {}
+
+    def generate(state):
+        captured["prompt"] = list(state["prompt_token_ids"])
+        return ["nope"]
+
+    run_e0(
+        [sample],
+        {"or1:7": "B0"},
+        generate_fn=generate,
+        verify_fn=lambda text, gt: False,
+        n_states=1,
+        n_rollouts=1,
+        n_continuations=1,
+        tokenizer=tok,
+        problems=texts,
+    )
+    decoded = "".join(chr(i) for i in captured["prompt"])
+    assert problem_text in decoded
+    assert "FROM_SAMPLES" not in decoded
+    assert "WRONG_QUESTION_FIELD" not in decoded
+
+    base_item = {
+        "or1_id": "or1:7",
+        "question": problem_text,
+        "problem_text": problem_text,
+        "ground_truth": "1",
+        "bin": "B0",
+    }
+    base_path = tmp_path / "base.jsonl"
+    base_path.write_text(json.dumps(base_item) + "\n", encoding="utf-8")
+    adaptor = C1OR1200Adaptor(str(base_path))
+    base_prompt = adaptor.format_prompt(adaptor.data[0])
+    prefix = response_token_ids(sample, tok)[: state_positions(4, 1)[0]]
+    assert captured["prompt"] == [ord(ch) for ch in base_prompt] + prefix
+    assert captured["prompt"] == continuation_prompt_ids(problem_text, prefix, tok)
+
+    with pytest.raises(ValueError, match="problem_text"):
+        run_e0(
+            [sample],
+            {"or1:7": "B0"},
+            generate_fn=generate,
+            verify_fn=lambda text, gt: False,
+            n_states=1,
+            n_continuations=1,
+            tokenizer=tok,
+            problems={"or1:7": ""},
+        )
