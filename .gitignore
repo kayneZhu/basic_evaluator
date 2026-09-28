@@ -47,7 +47,6 @@ data/cache/
 .env
 # retired thin-wrapper repo from before the flatten
 .git.wrapper.disabled/
-processed
 
 # Local copies of server seating manifests (build products stay in data/)
 data/processed/
