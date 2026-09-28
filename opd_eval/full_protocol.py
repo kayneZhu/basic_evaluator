@@ -116,6 +116,49 @@ def build_h_mini_n512_job(h_mini_path: Path) -> MiniJob:
     )
 
 
+def parse_extra_set_spec(spec: str) -> tuple[str, Path]:
+    """Parse ``name=/path/to.jsonl`` for ``--extra-set``."""
+    raw = str(spec).strip()
+    if "=" not in raw:
+        raise ValueError(
+            f"--extra-set expects name=path, got {spec!r}"
+        )
+    name, path_s = raw.split("=", 1)
+    name = name.strip()
+    path_s = path_s.strip()
+    if not name or not path_s:
+        raise ValueError(f"--extra-set expects name=path, got {spec!r}")
+    if any(ch in name for ch in "/\\"):
+        raise ValueError(f"--extra-set name must be a surface id, got {name!r}")
+    return name, Path(path_s)
+
+
+def build_extra_jobs(
+    specs: Sequence[str],
+    *,
+    n: int = H_MINI_N,
+    adaptor_key: str = "c1_or1_200",
+) -> list[MiniJob]:
+    """Arbitrary problem jsonl jobs with the same H-mini rendering/scorer path."""
+    jobs: list[MiniJob] = []
+    seen: set[str] = set()
+    for spec in specs:
+        name, path = parse_extra_set_spec(spec)
+        if name in seen:
+            raise ValueError(f"duplicate --extra-set name {name!r}")
+        seen.add(name)
+        jobs.append(
+            MiniJob(
+                surface=name,
+                benchmark_id=name,
+                adaptor_key=str(adaptor_key),
+                data_path=Path(path),
+                n=int(n),
+            )
+        )
+    return jobs
+
+
 def plan_summary(jobs: Sequence[MiniJob], *, base_seed: int) -> dict:
     refuse_binning_seed(int(base_seed), context="full_protocol")
     if int(base_seed) in {0, 1}:
@@ -171,6 +214,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Run only --h-mini at n=512. Samples stay in samples.jsonl "
         "so pass@k for k=1..512 is unbiased.",
     )
+    parser.add_argument(
+        "--extra-set",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help="Evaluate an arbitrary problem jsonl with the H-mini path "
+        "(same C.1 prompt, scorer, sampler, seed, sharding/resume, output). "
+        "Repeatable. Example: --extra-set h_b0_extra=data/h400_b0_extra50.jsonl",
+    )
+    parser.add_argument(
+        "--extra-n",
+        type=int,
+        default=H_MINI_N,
+        help=f"Samples per problem for each --extra-set (default {H_MINI_N})",
+    )
+    parser.add_argument(
+        "--only-extra",
+        action="store_true",
+        help="Run only --extra-set jobs (skip the fixed full / H-mini surfaces).",
+    )
     args = parser.parse_args(argv)
     if args.worker:
         return worker_main(args)
@@ -180,7 +243,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     math500 = Path(args.math500_mini)
     if math500 == DEFAULT_MATH500_MINI_PATH:
         math500 = DEFAULT_MATH500
-    if args.only_h_mini_n512:
+    if args.only_extra:
+        if not args.extra_set:
+            raise SystemExit("--only-extra requires at least one --extra-set")
+        jobs = []
+    elif args.only_h_mini_n512:
         jobs = [build_h_mini_n512_job(Path(args.h_mini))]
     else:
         jobs = build_full_jobs(
@@ -191,12 +258,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             hmmt25=args.hmmt25,
             include_h_k128=bool(args.h_k128),
         )
+    extra_jobs = build_extra_jobs(args.extra_set, n=int(args.extra_n)) if args.extra_set else []
+    jobs.extend(extra_jobs)
     # Point the H jobs at the v5 H file when the mini flag was left at its default.
     summary = plan_summary(jobs, base_seed=int(args.base_seed))
-    if args.only_h_mini_n512:
+    if args.only_h_mini_n512 and not args.only_extra:
         summary["mode"] = "h_mini_n512"
         summary["samples_kept"] = "samples.jsonl"
         summary["pass_at_k"] = "1..512"
+    if args.only_extra:
+        summary["mode"] = "extra_only"
+    if extra_jobs:
+        summary["extra_sets"] = [
+            {"surface": j.surface, "n": j.n, "data_path": str(j.data_path)}
+            for j in extra_jobs
+        ]
     if args.dry_plan:
         print(json.dumps(summary, indent=2))
         return 0
