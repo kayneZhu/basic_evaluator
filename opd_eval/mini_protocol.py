@@ -33,7 +33,13 @@ DEFAULT_GPU_IDLE_POLL_S = 10
 from adaptors.adaptor_factory import AdaptorFactory
 from adaptors.base_adaptor import BaseAdaptor
 from opd_eval.contract import vllm_stop_token_ids
-from opd_eval.length import MAX_MODEL_LEN, STUDENT_MAX_NEW_TOKENS
+from opd_eval.length import (
+    MAX_MODEL_LEN,
+    STUDENT_MAX_NEW_TOKENS,
+    resolve_eval_max_model_len,
+    resolve_eval_max_new_tokens,
+    resolve_eval_model_dir,
+)
 from opd_eval.sampling import (
     EVAL_SEED_MINI_PROTOCOL,
     EVAL_TEMPERATURE,
@@ -1188,7 +1194,12 @@ def worker_main(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--model-dir", type=Path, required=True)
+    p.add_argument(
+        "--model-dir",
+        type=Path,
+        default=None,
+        help="Student HF dir; else OPD_EVAL_MODEL_DIR / OPD_STUDENT_MODEL",
+    )
     p.add_argument("--out-root", type=Path, required=True)
     p.add_argument("--base-seed", type=int, default=EVAL_SEED_MINI_PROTOCOL)
     p.add_argument(
@@ -1235,8 +1246,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_GENERATE_BATCH_SIZE,
         help="Requests per llm.generate call (engine concurrency still max_num_seqs)",
     )
-    p.add_argument("--max-new-tokens", type=int, default=STUDENT_MAX_NEW_TOKENS)
-    p.add_argument("--max-model-len", type=int, default=MAX_MODEL_LEN)
+    p.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=None,
+        help="Student response cap; else OPD_EVAL_MAX_NEW_TOKENS or 10240",
+    )
+    p.add_argument(
+        "--max-model-len",
+        type=int,
+        default=None,
+        help="Defaults to prompt(1024)+max_new_tokens when omitted",
+    )
     p.add_argument("--temperature", type=float, default=EVAL_TEMPERATURE)
     p.add_argument("--top-p", type=float, default=EVAL_TOP_P)
     p.add_argument(
@@ -1281,7 +1302,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.worker:
         if args.work_list is None or args.shard_out is None:
             raise SystemExit("--worker requires --work-list and --shard-out")
+        # Workers inherit resolved lengths from the parent argv.
+        if args.max_new_tokens is None:
+            args.max_new_tokens = resolve_eval_max_new_tokens(None)
+        if args.max_model_len is None:
+            args.max_model_len = resolve_eval_max_model_len(int(args.max_new_tokens))
         return worker_main(args)
+
+    model_dir_s = resolve_eval_model_dir(
+        str(args.model_dir) if args.model_dir is not None else None
+    )
+    if not model_dir_s:
+        raise SystemExit(
+            "student model path required: --model-dir or "
+            "OPD_EVAL_MODEL_DIR / OPD_STUDENT_MODEL"
+        )
+    args.model_dir = Path(model_dir_s)
+    args.max_new_tokens = resolve_eval_max_new_tokens(args.max_new_tokens)
+    args.max_model_len = resolve_eval_max_model_len(
+        int(args.max_new_tokens), cli_max_model_len=args.max_model_len
+    )
 
     refuse_binning_seed(int(args.base_seed), context="mini_protocol")
     jobs = default_mini_jobs(
