@@ -409,6 +409,20 @@ class TestSamplingParamsStable(unittest.TestCase):
         self.assertEqual(scored["n_words"], len(r"\boxed{27}".split()))
         self.assertEqual(scored["finish_reason"], "length")
         self.assertNotEqual(scored["n_tokens"], scored["n_words"])
+        self.assertEqual(scored["truncated"], True)
+        self.assertEqual(scored["terminal_token_id"], 5)
+        self.assertEqual(scored["has_think_end"], False)
+        closed = score_response(
+            adaptor,
+            "</think>\n\\boxed{27}",
+            "27",
+            token_ids=[151668, 151645],
+            finish_reason="stop",
+            max_new_tokens=16384,
+        )
+        self.assertEqual(closed["has_think_end"], True)
+        self.assertEqual(closed["terminal_token_id"], 151645)
+        self.assertEqual(closed["truncated"], False)
 
     def test_progress_incremental_no_recount(self):
         from opd_eval.mini_protocol import (

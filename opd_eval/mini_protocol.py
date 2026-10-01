@@ -70,6 +70,8 @@ DEFAULT_MAX_NUM_SEQS = 64
 DEFAULT_GENERATE_BATCH_SIZE = 1024
 DEFAULT_N_GPUS = 4
 DEFAULT_GPU_MEMORY_UTILIZATION = 0.90
+# ``</think>`` on the Qwen3 tokenizer. Same id as train ``rollout_passk``.
+THINK_END_TOKEN_ID = 151668
 
 
 def sampling_params_kwargs(
@@ -224,6 +226,26 @@ def plan_work_items(
     return items
 
 
+def completion_diag(
+    response: str,
+    token_ids: Optional[Sequence[int]],
+    finish_reason: Optional[str],
+    max_new_tokens: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Per-generation length diagnostics. Empty when token ids are absent."""
+    if token_ids is None:
+        return {}
+    ids = [int(x) for x in token_ids]
+    truncated = str(finish_reason or "").lower() == "length"
+    if max_new_tokens is not None and int(max_new_tokens) > 0 and len(ids) >= int(max_new_tokens):
+        truncated = True
+    return {
+        "has_think_end": (THINK_END_TOKEN_ID in ids) or ("</think>" in response),
+        "terminal_token_id": (ids[-1] if ids else None),
+        "truncated": bool(truncated),
+    }
+
+
 def score_response(
     adaptor: BaseAdaptor,
     response: str,
@@ -231,6 +253,7 @@ def score_response(
     *,
     token_ids: Optional[Sequence[int]] = None,
     finish_reason: Optional[str] = None,
+    max_new_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Score one completion.
 
@@ -252,6 +275,11 @@ def score_response(
     }
     if finish_reason is not None:
         out["finish_reason"] = str(finish_reason)
+    out.update(
+        completion_diag(
+            response, token_ids, finish_reason, max_new_tokens=max_new_tokens
+        )
+    )
     return out
 
 
@@ -1096,6 +1124,28 @@ def worker_main(args: argparse.Namespace) -> int:
 
     from vllm import LLM, SamplingParams
 
+    _kw = sampling_params_kwargs(
+        0,
+        temperature=float(args.temperature),
+        top_p=float(args.top_p),
+        max_tokens=int(args.max_new_tokens),
+    )
+    _kw.pop("seed", None)
+    print(
+        "EFFECTIVE_STUDENT "
+        + json.dumps(
+            {
+                "model": str(args.model_dir),
+                "prompt": "C.1 + <think>\\n",
+                "max_model_len": int(args.max_model_len),
+                "max_num_seqs": int(args.max_num_seqs),
+                "sampling": _kw,
+                "n_pending": len(pending),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     llm = LLM(
         model=str(args.model_dir),
         tensor_parallel_size=1,
@@ -1149,6 +1199,7 @@ def worker_main(args: argparse.Namespace) -> int:
                     w["ground_truth"],
                     token_ids=token_ids,
                     finish_reason=finish_reason,
+                    max_new_tokens=int(args.max_new_tokens),
                 )
             else:
                 scored = {

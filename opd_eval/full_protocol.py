@@ -290,6 +290,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     n_gpus = int(args.n_gpus)
     if args.gpu_ids:
         n_gpus = len([x for x in args.gpu_ids.split(",") if x.strip()])
+    print(
+        "EFFECTIVE_CONFIG "
+        + json.dumps(
+            {
+                "model_dir": str(args.model_dir),
+                "temperature": float(args.temperature),
+                "top_p": float(args.top_p),
+                "max_new_tokens": args.max_new_tokens,
+                "max_model_len": args.max_model_len,
+                "base_seed": int(args.base_seed),
+                "n_gpus": n_gpus,
+                "gpu_ids": args.gpu_ids,
+                "max_num_seqs": int(args.max_num_seqs),
+                "prompt": "C.1 + <think>\\n",
+                "jobs": summary.get("jobs"),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     reports = []
     for job in jobs:
         reports.append(
