@@ -226,6 +226,31 @@ def plan_work_items(
     return items
 
 
+def repeated_ngram(
+    token_ids: Sequence[int],
+    *,
+    n: int = 50,
+    times: int = 3,
+) -> bool:
+    """True when one token n-gram occurs at least ``times`` overlapping windows.
+
+    Sequences shorter than ``n`` are not repetitions. This is the C.2 probe
+    rule (50-gram x3), a diagnostic, not a filter.
+    """
+    ids = [int(x) for x in token_ids]
+    if n <= 0 or times <= 1 or len(ids) < n:
+        return False
+    counts: Dict[Tuple[int, ...], int] = {}
+    last = len(ids) - n + 1
+    for i in range(last):
+        gram = tuple(ids[i : i + n])
+        seen = counts.get(gram, 0) + 1
+        if seen >= times:
+            return True
+        counts[gram] = seen
+    return False
+
+
 def completion_diag(
     response: str,
     token_ids: Optional[Sequence[int]],
@@ -248,6 +273,7 @@ def completion_diag(
         "has_think_end": (THINK_END_TOKEN_ID in ids) or ("</think>" in response),
         "terminal_token_id": (ids[-1] if ids else None),
         "truncated": bool(truncated),
+        "repetition": repeated_ngram(ids),
     }
     from adaptors.prompt_format import (
         PROMPT_FORMAT_C2,
