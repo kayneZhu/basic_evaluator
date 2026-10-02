@@ -239,11 +239,25 @@ def completion_diag(
     truncated = str(finish_reason or "").lower() == "length"
     if max_new_tokens is not None and int(max_new_tokens) > 0 and len(ids) >= int(max_new_tokens):
         truncated = True
-    return {
+    # has_think_end: token 151668 (``</think>``) in the generated ids, or the
+    # literal string in the response. Diagnostic only, not a filter.
+    # C.1: often true when the model closes its think block.
+    # C.2: the empty think block is prefilled in the prompt, so a hit in
+    # the continuation should be rare and does not gate the verifier.
+    out: Dict[str, Any] = {
         "has_think_end": (THINK_END_TOKEN_ID in ids) or ("</think>" in response),
         "terminal_token_id": (ids[-1] if ids else None),
         "truncated": bool(truncated),
     }
+    from adaptors.prompt_format import (
+        PROMPT_FORMAT_C2,
+        c2_response_think_flags,
+        resolve_prompt_format,
+    )
+
+    if resolve_prompt_format() == PROMPT_FORMAT_C2:
+        out.update(c2_response_think_flags(response))
+    return out
 
 
 def score_response(
@@ -261,6 +275,9 @@ def score_response(
     provided (vLLM ``completion.token_ids``). Legacy word-count lives in
     ``n_words``. ``finish_reason`` is ``stop`` / ``length`` when known.
     """
+    from adaptors.prompt_format import verifier_text
+
+    response = verifier_text(response)
     extracted = adaptor.extract_answer(response)
     verified = bool(adaptor.verify_answer(extracted, ground_truth))
     n_words = len(response.split())
@@ -964,6 +981,8 @@ def _run_vllm_dp(
             str(gpu_memory_utilization),
             "--benchmark-id",
             benchmark_id,
+            "--prompt-format",
+            os.environ.get("OPD_PROMPT_FORMAT", "c1_think"),
             "--worker-adaptor-key",
             adaptor_key,
             "--worker-data-path",
@@ -1123,6 +1142,7 @@ def worker_main(args: argparse.Namespace) -> int:
         )
 
     from vllm import LLM, SamplingParams
+    from adaptors.prompt_format import prompt_format_label
 
     _kw = sampling_params_kwargs(
         0,
@@ -1136,7 +1156,7 @@ def worker_main(args: argparse.Namespace) -> int:
         + json.dumps(
             {
                 "model": str(args.model_dir),
-                "prompt": "C.1 + <think>\\n",
+                "prompt": prompt_format_label(),
                 "max_model_len": int(args.max_model_len),
                 "max_num_seqs": int(args.max_num_seqs),
                 "sampling": _kw,
@@ -1312,6 +1332,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--temperature", type=float, default=EVAL_TEMPERATURE)
     p.add_argument("--top-p", type=float, default=EVAL_TOP_P)
     p.add_argument(
+        "--prompt-format",
+        choices=["c1_think", "c2_nothink"],
+        default=None,
+        help="c1_think (open <think> prefill) or c2_nothink (closed empty "
+        "think block). Default: OPD_PROMPT_FORMAT, else c1_think.",
+    )
+    p.add_argument(
+        "--require-prompt-format",
+        action="store_true",
+        help="Fail if neither --prompt-format nor OPD_PROMPT_FORMAT is set. "
+        "Nothink scripts pass this so an unset value cannot fall back to C.1.",
+    )
+    p.add_argument(
         "--gpu-memory-utilization",
         type=float,
         default=DEFAULT_GPU_MEMORY_UTILIZATION,
@@ -1349,7 +1382,10 @@ def _plan_run_total(jobs: Sequence[MiniJob], base_seed: int) -> int:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    from adaptors.prompt_format import apply_cli_prompt_format
+
     args = build_parser().parse_args(argv)
+    apply_cli_prompt_format(args)
     if args.worker:
         if args.work_list is None or args.shard_out is None:
             raise SystemExit("--worker requires --work-list and --shard-out")

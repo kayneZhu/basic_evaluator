@@ -157,10 +157,18 @@ def response_token_ids(row: Mapping[str, Any], tokenizer: Any) -> list[int]:
 
 
 def eval_chat_template_ids(question: str, tokenizer: Any) -> list[int]:
-    """Eval C.1 chat-template ids (g=0, including the format ``<think>``)."""
+    """Eval prompt ids for the selected format (C.1 or C.2). No BOS."""
     from adaptors.c1_prompt_mixin import render_c1_prompt
+    from adaptors.prompt_format import (
+        PROMPT_FORMAT_C2,
+        render_c2_prompt,
+        resolve_prompt_format,
+    )
 
-    text = render_c1_prompt(str(question), tokenizer)
+    if resolve_prompt_format() == PROMPT_FORMAT_C2:
+        text = render_c2_prompt(str(question))
+    else:
+        text = render_c1_prompt(str(question), tokenizer)
     return [int(x) for x in tokenizer.encode(text, add_special_tokens=False)]
 
 

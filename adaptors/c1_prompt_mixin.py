@@ -174,8 +174,17 @@ class C1PromptMixin:
         self._tokenizer = _PublishedQwen3BaseChatTemplate()
 
     def format_prompt(self, item: Dict[str, Any]) -> str:
+        from adaptors.prompt_format import (
+            PROMPT_FORMAT_C2,
+            render_c2_prompt,
+            resolve_prompt_format,
+        )
+
+        question = self._get_question_text(item)
+        if resolve_prompt_format() == PROMPT_FORMAT_C2:
+            return render_c2_prompt(question)
         self._ensure_tokenizer()
-        return render_c1_prompt(self._get_question_text(item), self._tokenizer)
+        return render_c1_prompt(question, self._tokenizer)
 
 
 class _PublishedQwen3BaseChatTemplate:

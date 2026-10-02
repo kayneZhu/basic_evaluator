@@ -234,7 +234,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         action="store_true",
         help="Run only --extra-set jobs (skip the fixed full / H-mini surfaces).",
     )
+    from adaptors.prompt_format import apply_cli_prompt_format
+
     args = parser.parse_args(argv)
+    apply_cli_prompt_format(args)
     if args.worker:
         return worker_main(args)
     h_path = Path(args.h_mini)
@@ -290,6 +293,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     n_gpus = int(args.n_gpus)
     if args.gpu_ids:
         n_gpus = len([x for x in args.gpu_ids.split(",") if x.strip()])
+    from adaptors.prompt_format import prompt_format_label
+
     print(
         "EFFECTIVE_CONFIG "
         + json.dumps(
@@ -303,7 +308,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "n_gpus": n_gpus,
                 "gpu_ids": args.gpu_ids,
                 "max_num_seqs": int(args.max_num_seqs),
-                "prompt": "C.1 + <think>\\n",
+                "prompt": prompt_format_label(),
                 "jobs": summary.get("jobs"),
             },
             sort_keys=True,
