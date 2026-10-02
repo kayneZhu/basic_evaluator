@@ -5,10 +5,13 @@ from __future__ import annotations
 import os
 import unittest
 
+from adaptors.c1_prompt_mixin import C1_SYSTEM_PROMPT as MIXIN_SYSTEM
 from adaptors.c1_prompt_mixin import render_c1_chatml
 from adaptors.prompt_format import (
+    C1_SYSTEM_PROMPT,
     C2_ASSISTANT_PREFILL,
     build_c2_user_content,
+    c1_system_block,
     render_c2_prompt,
     resolve_prompt_format,
     verifier_text,
@@ -31,13 +34,16 @@ class C2PromptTests(unittest.TestCase):
         self.assertEqual(build_c2_user_content(PROBLEM), OLD_AND_NEW_USER)
         self.assertNotIn("<think>", OLD_AND_NEW_USER)
         rendered = render_c2_prompt(PROBLEM)
-        self.assertTrue(rendered.startswith("<|im_start|>user\n" + OLD_AND_NEW_USER))
+        self.assertEqual(C1_SYSTEM_PROMPT, MIXIN_SYSTEM)
+        self.assertTrue(rendered.startswith(c1_system_block()))
+        self.assertIn("<|im_start|>user\n" + OLD_AND_NEW_USER, rendered)
         self.assertTrue(rendered.endswith(C2_ASSISTANT_PREFILL))
-        self.assertNotIn("<|im_start|>system", rendered)
-        self.assertNotIn("Think step by step.", rendered)
+        self.assertEqual(rendered.count("<|im_start|>system"), 1)
         c1 = render_c1_chatml(PROBLEM)
+        self.assertTrue(c1.startswith(c1_system_block()))
         self.assertIn("Think step by step.", c1)
         self.assertNotIn("</think>", c1)
+        self.assertTrue(c1.endswith("<think>\n"))
 
     def test_unset_defaults_c1_required_fails(self):
         self.assertEqual(resolve_prompt_format(), "c1_think")

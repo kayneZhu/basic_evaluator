@@ -5,10 +5,9 @@ C.2 is a fixed ChatML string, the same bytes training renders in
 ``apply_chat_template`` for C.2: Qwen3-1.7B-Base must get the same ids
 as Qwen3-1.7B and the Qwen3-4B teacher.
 
-C.2 user text is C.1's user text. That text has no ``<think>``-tag
-instructions. The C.1 system line (``Think step by step.``) is omitted
-because the official non-thinking template on a user-only message has
-no system turn.
+C.2 keeps C.1's system line and user text. The only difference from
+C.1 is the assistant prefill: a closed empty think block instead of
+an open ``<think>\\n``.
 """
 
 from __future__ import annotations
@@ -20,10 +19,19 @@ PROMPT_FORMAT_C1 = "c1_think"
 PROMPT_FORMAT_C2 = "c2_nothink"
 PROMPT_FORMATS = (PROMPT_FORMAT_C1, PROMPT_FORMAT_C2)
 
+C1_SYSTEM_PROMPT = (
+    "You are an expert mathematician with strong problem-solving skills. "
+    "Think step by step."
+)
 C2_USER_SUFFIX = (
     "Please reason step by step, and put your final answer within \\boxed{}."
 )
 C2_ASSISTANT_PREFILL = "<think>\n\n</think>\n\n"
+
+
+def c1_system_block() -> str:
+    """Same ChatML system turn C.1's published template emits."""
+    return f"<|im_start|>system\n{C1_SYSTEM_PROMPT}<|im_end|>\n"
 
 
 def build_c2_user_content(problem: str) -> str:
@@ -37,6 +45,7 @@ def render_c2_chatml(user: str) -> str:
     No BOS. Callers encode with ``add_special_tokens=False``.
     """
     return (
+        f"{c1_system_block()}"
         "<|im_start|>user\n"
         f"{user}<|im_end|>\n"
         "<|im_start|>assistant\n"
